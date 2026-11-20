@@ -1,0 +1,9 @@
+# d3 decision-model scoring (python -m scoring) and teacher agreement (python -m evaluation).
+#
+# Confirmed in conda env vc_cloud: d3-mini loads and scores with transformers 5.19.0 after
+# adding accelerate 1.16.0 (the model card pins transformers 5.17.0).
+# flash-linear-attention is optional: without it d3 falls back to a slower reference kernel.
+-r requirements-main.txt
+accelerate>=1.10
+einops
+torchvision

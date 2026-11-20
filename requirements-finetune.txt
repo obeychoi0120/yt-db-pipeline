@@ -1,0 +1,13 @@
+# LoRA fine-tuning (src/finetuning/train_lora.sh, python -m finetuning merge).
+# Install in its own conda env.
+#
+# Confirmed combination (conda env gemma_ft, Python 3.12): ms-swift 4.6.1, peft 0.20.0,
+# torch 2.15.0, transformers 5.14.1.
+# ms-swift 4.6.1 reads Gemma 4 image features as one tensor; transformers 5.15 and later
+# return them split per image and training fails with
+# "'tuple' object has no attribute 'to'", so transformers is pinned below 5.15.
+ms-swift==4.6.1
+transformers==5.14.1
+peft
+torchvision
+pillow

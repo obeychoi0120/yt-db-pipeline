@@ -1,0 +1,1024 @@
+# 프롬프트 개선 방향 정리
+
+이전 대화 「Graph 생성 프롬프트 업데이트 작업」의 설계 논의와 현재 `prompts/`에 저장된 프롬프트를 대조하여 정리했습니다. 버전은 Run 번호가 아닌 **프롬프트 파일의 버전**을 뜻합니다. 아래 내용은 각 버전의 설계 의도와 반영 사항이며, 추천 성능 향상을 보장하는 설명은 아닙니다.
+
+공통 목표는 **추천에 필요한 주제·구체적인 초점·활동을 보존하면서, 원문의 상세 표현과 근거 없는 관계·서사 재구성을 줄이는 것**입니다. Description을 Graph의 정답으로 간주하지 않고, 누락 후보를 찾은 뒤 키프레임으로 확인한다는 원칙을 따릅니다.
+
+이 프로젝트에서 프롬프트를 추가·수정·삭제하거나 이름을 변경할 때는 이 문서도 같은 작업에서 갱신합니다. 변경 이유·주요 차이·연동 영향과 검증 여부를 기록하고 기존 이력은 보존합니다. 각 프롬프트 섹션의 변경 이력과 버전 링크는 최신순으로 배치합니다. 이 규칙은 [AGENTS.md](../AGENTS.md)에 명시되어 있습니다.
+
+## scene_graph
+
+대상(최신순): [v9_extended](../prompts/scene_graph_v9_extended.md) · [v9_base](../prompts/scene_graph_v9_base.md) · [v9_short](../prompts/scene_graph_v9_short.md) → [v9(삭제됨)](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/scene_graph_v9.md) → [v8_2](../prompts/scene_graph_v8_2.md) → [v8](../prompts/scene_graph_v8.md) → [v7(삭제됨)](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/scene_graph_v7.md) → [v6(삭제됨)](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/scene_graph_v6.md) → [v5(삭제됨)](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/scene_graph_v5.md) → [v4(삭제됨)](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/scene_graph_v4.md)
+
+**개선 흐름: 콘텐츠 맥락과 행동을 분리 → 같은 주제 안의 차별점 보존 → 행동별 역할과 불확실성 명확화 → receiver 제거로 역할 구분 부담 축소 → 이름 직접 참조와 모델 크기별 프롬프트 분리 → 규칙 문장 간소화(v10, 효과 미검증) → tool·place 라벨화와 줄 배치 템플릿(v9·v10, 효과 미검증) → 행동 반복 방지 규칙(v9·v10, 효과 미검증) → v10 tool·place 라벨 제거와 고정 두 칸(효과 미검증).**
+
+### 2026-11-20: 파서 지원 범위를 v8_2·v9_base로 한정, Description·옛 Run 호환 제거
+
+프롬프트 파일 내용은 바꾸지 않았습니다. 저장소를 YouTube 수집 → Gemini 교사·Gemma 4 E2B 학생 추출 → d3-mini 채점 → LoRA 파이프라인으로 바꾸면서 연동 코드를 정리했습니다. 사용자 결정에 따라 파서는 [v8_2](../prompts/scene_graph_v8_2.md)(ID 형식)와 [v9_base](../prompts/scene_graph_v9_base.md)(이름 형식, `tool:`·`place:` 라벨) 두 형식을 기준으로 합니다.
+
+**대상 목록 정리.** 위 "대상" 줄을 현재 `prompts/`에 있는 파일(v8, v8_2, v9_base, v9_short, v9_extended)에 맞췄습니다. 이전 목록의 v9_core·v10_core·v10_extended는 현재 폴더에 없습니다. 이 파일들의 삭제·이름 변경은 이번 작업이 아니라 그 전에 이루어졌고, 경위는 확인하지 못했습니다.
+
+**연동 변경.**
+
+| 항목 | 이전 | 현재 |
+| --- | --- | --- |
+| 파싱 흐름(`graph-text/v25`) | ID 형식·이름 형식 공통 | 변경 없음. 파서 버전도 그대로 |
+| v8 `location` → `place` 정규화(`normalize_graph_fields`) | 저장된 v8 Run을 읽기 위해 유지 | 삭제. Action에 `location`이 있는 저장 행은 지원하지 않는 형식으로 거부 |
+| 저장 행 재분류(`reclassify_scene_file`, `recover_scene_graph`) | 재개 전에 옛 행을 현재 파서로 다시 분류 | 삭제. 저장된 경고 태그를 그대로 신뢰 |
+| Description 추출(`extract-description-scenes`, `scene_description_*`) | 단계·저장 형식·기본 penalty 존재 | 전부 삭제. Graph 추출만 남음 |
+| 로컬 모델 | `qwen3vl_2b/4b/8b` 고정 목록 | 설정의 `models.<이름>.backend`(`vllm`·`gemini`)로 판별. 코드에 모델 이름 없음 |
+| 데이터셋 구분 | `microlens_100k`·`m3l_10m` | 삭제. manifest 기반 단일 데이터 |
+
+**호환성.**
+- v9_short(이름 형식 + 라벨 없는 `; tool; place`)와 v9_extended는 v9_base와 같은 파싱 경로를 타므로 계속 읽힙니다. 따로 막지 않았습니다.
+- v8은 줄 형식이 v8_2와 같아 새로 생성하는 출력은 그대로 파싱됩니다. 지원이 빠진 것은 예전 v8 Run에 저장된 `location` 필드뿐입니다.
+- HGVRec의 `R14_v8.2_261117`(Gemini·2B, 각 300개 영상 1,809행)을 정리된 `scene_storage.read_scene_records`로 읽어 모두 검증을 통과하는 것을 확인했습니다(읽기 전용).
+
+**검증한 것.** v8_2와 v9_base 프롬프트의 예시 6개가 모두 `native`로 파싱됩니다(`tests/test_parser.py`). `pytest` 11개와 `ruff check src tests`가 통과했습니다.
+
+**미검증.** Gemma 4 E2B가 두 형식을 얼마나 잘 지키는지, v9_base와 v8_2 중 어느 쪽이 d3-mini 점수가 높은지는 아직 측정하지 않았습니다.
+
+
+### 2026-11-16: 사용하지 않는 v2~v7 프롬프트 파일 삭제
+
+저장소 리팩토링에서 `prompts/scene_graph_v2.md`~`scene_graph_v7.md`를 삭제했습니다. 남은 프롬프트(v8·v8_2·v9·v10, scene_description v1~v3)의 내용은 바꾸지 않았습니다.
+
+**삭제 이유.** 테스트, 현재 실행 스크립트와 문서에서 이 파일들을 참조하지 않습니다. 현재 파서(`graph-text/v25`)도 v8 이후 형식만 읽도록 이미 정리되어 있습니다(2026-11-15 항목 참조). 이전 내용은 git 이력과 위 대상 목록의 "삭제됨" 링크에서 볼 수 있습니다. 아래의 v4~v7 변경 이력은 그대로 보존합니다.
+
+**연동 변경(같은 리팩토링).** 프롬프트 파일과 별개로 추출 단계 기록 방식이 바뀌었습니다.
+- `generation_identity.json`의 `model`은 로컬 체크포인트의 파일 서명(크기·mtime·해시) 대신 경로(`{"path": ...}`)만 기록합니다.
+- 이 파일은 기록용이며 임베딩 캐시 키에 들어가지 않습니다. `--schema`는 이제 존재하는 파일이면 확장자와 관계없이 받습니다.
+- Qwen 체크포인트 폴더 이름의 크기 표기(2B/4B/8B) 검사는 삭제했습니다.
+- v8의 `location` 역할을 `place`로 읽는 호환은 유지합니다. 최근 v8 Run(`R13_v8_261115`)에 이 형식으로 저장된 결과가 있기 때문입니다.
+
+**검증한 것.** 삭제 후 전체 테스트(`pytest tests`)가 통과했습니다.
+
+**미검증.** 실제 GPU 추출은 다시 실행하지 않았습니다.
+
+### 2026-11-15: v10 tool·place 라벨 제거(`; tool; place` 고정 두 칸)
+
+[v10_core](../prompts/scene_graph_v10_core.md)와 [v10_extended](../prompts/scene_graph_v10_extended.md)를 제자리에서 수정했습니다. 사용자 요청으로 행동 줄의 `tool:`·`place:` 라벨을 없앴습니다. v9는 바꾸지 않았습니다. extended가 core 전문으로 시작하는 구조는 그대로입니다.
+
+**변경.**
+
+| | 이전 v10 | 현재 v10 |
+| --- | --- | --- |
+| 행동 줄 | `actor - action - target; tool: name; place: name` | `actor - action - target; tool; place` |
+| 빈 칸 | 보일 때만 `tool:`·`place:`를 붙이고 아니면 칸을 생략 | 두 칸을 항상 씀. 도구가 없으면 tool은 `none`, 구체적 장소가 안 보이면 place는 `unknown` |
+| 규칙 문장 | "Add tool: and then place: only when the frames show them … Otherwise leave the slot out." | "tool and place are names copied exactly from [Entities]. Write none for tool … unknown for place … Every action line has both slots." |
+| 예시 | 라벨 형식, 칸 생략 | 같은 내용을 위치 형식으로 바꿈(core 3줄, extended 추가 예시 4줄). 예: `man2 - carrying - wooden board; none; unknown` |
+
+**설계 의도.** 라벨이 없으면 칸을 위치로만 구분합니다. 칸 생략을 허용하면 `chef - cutting - fish; kitchen`의 `kitchen`을 tool로 읽게 되므로, 사용자 결정에 따라 두 칸을 항상 쓰게 했습니다. 이 형식은 v8의 다섯 칸 형식과 같고, v10의 이름 직접 참조는 유지합니다.
+
+**호환성.** 파서는 바꾸지 않았습니다. 이름 형식에서 라벨 없는 세 구간(`body; tool; place`)은 기존에도 strict 단계에서 `native`로 읽히고, 라벨 형식도 v9를 위해 그대로 읽습니다. 두 v10 프롬프트의 해시가 바뀌므로, 이전 v10으로 생성한 `R12_v10_261113`(Gemini)과는 다른 프롬프트입니다.
+
+**검증한 것.** 두 파일의 모든 예시가 `native`로 파싱되는지와 extended가 core로 시작하는지를 기존 테스트로 확인했습니다.
+
+**미검증.** 이 프롬프트로는 생성하지 않았습니다. 모델이 두 칸을 항상 채우는지, `none`·`unknown` 선택에서 실수가 늘어나는지, 칸 생략보다 출력 토큰이 늘어 절단이 늘어나는지, 추천 성능에 영향이 있는지는 확인하지 않았습니다.
+
+### 2026-11-15: v8~v10에 없는 파싱 경로 제거와 한쪽 공백 구분자 복구 (`graph-text/v25`)
+
+프롬프트 파일은 변경하지 않았습니다. 사용자 결정에 따라 현재 프롬프트(v8·v8_2·v9·v10)에 해당하지 않는 파싱 경로를 지우고, 공백이 한쪽에만 있는 행동 구분자를 복구합니다.
+
+**제거.**
+
+| 경로 | 쓰던 버전 | 처리 |
+| --- | --- | --- |
+| 모델 출력 JSON 파싱·복구(`semantic_graph/json_repair.py`) | v8~v10에는 없음. 네 프롬프트 모두 "No JSON"을 지시 | 파일 삭제. `{`로 시작하는 출력은 `PARSE_FAILED` |
+| `[End]` 섹션 | v3·v4 | 헤더로 인정하지 않음. `[End]` 줄은 `PARSE_FAILED` |
+
+- 저장된 v8~v10 Run의 원문(실패·절단 행)을 확인했습니다. `R05_v8_261105` 4,605행, `R05_v8_8b_261106` 1,274행, `R11_v9_261113` 358행, `R12_v10_261113` 317행 중 JSON으로 시작하거나 `[End]`가 들어 있는 행은 없었습니다.
+- 저장된 구조화 그래프의 v8 `location` → `place` 정규화(`normalize_graph_fields`)는 JSON 문자열 파싱과 별개의 v8 호환이므로 유지합니다. 이 호환을 검사하던 테스트는 행을 JSON 문자열로 만들어 쓰고 있었습니다. 실제 저장 형식과 같은 딕셔너리로 바꿨습니다(`R05_v8_261105`의 Action에 `location` 필드가 있는 행은 0건).
+- 코드 펜스·글머리표·헤더 표기 변형·전각 구분자 복구는 특정 버전의 형식이 아니라 모델의 형식 실수를 복구하는 것이므로 유지했습니다.
+
+**추가.** 행동 구분자로, 앞뒤 중 한쪽에만 공백이 있는 `-`·`–`·`—`도 인정합니다. 예: `man -捞取- fish`, `p1 -被打 - p2`. 양쪽에 공백이 없는 하이픈(`t-shirt`, `hand-washing`)은 단어 안의 하이픈으로 보고 구분자로 쓰지 않습니다.
+
+**저장된 Run에 미치는 영향(읽기 전용).** 원문이 남은 `PARSE_FAILED` 행 중 현재 파서로 읽히는 행이 `R05_v8_261105`에서 2,806 → 2,826건, `R05_v8_8b_261106`에서 99 → 113건으로 늘었습니다. 새로 읽히는 행 표본은 대부분 행동이 중국어 동사인 출력(`p1 -掏出- t1`)이었습니다. 구조는 복구되지만 영어로 쓰라는 프롬프트 지시는 지켜지지 않은 출력입니다. Gemini v9·v10 Run은 변화가 없습니다.
+
+**검증.** `vc_cloud`에서 전체 테스트 38개와 `ruff check src tests`가 통과했습니다. JSON 출력과 `[End]` 출력이 `PARSE_FAILED`가 되는지, 한쪽 공백 구분자가 복구되는지, 단어 하이픈은 유지되는지 확인하는 검사를 추가했습니다.
+
+**미검증.** 한쪽 공백 규칙이 장소·도구 이름 안의 하이픈(예: `pre -war house`)을 구분자로 잘못 읽는 경우가 실제로 얼마나 생기는지는 확인하지 않았습니다. 중국어 행동이 들어간 장면이 추천 입력에 주는 영향도 확인하지 않았습니다.
+
+### 2026-11-15: lenient 경로 제거와 ID·이름 형식 공통 복구 (`graph-text/v24`)
+
+프롬프트 파일은 변경하지 않았습니다. 사용자 결정에 따라 v8·v8_2(ID 형식)와 v9·v10(이름 형식)이 같은 파싱 흐름을 타도록 바꾸고, 줄 모양으로 섹션을 추정하던 완화 단계(lenient)를 없앴습니다.
+
+**변경 이유.** v8_2의 `actor_1:` 같은 ID는 lenient 단계의 ID 형식 거부 검사(`[A-Za-z]{1,3}\d+:`)에 걸리지 않습니다. 그래서 형식이 크게 깨진 출력이 들어오면 `actor_1 woman`이라는 이름의 엔티티와, 속성 없는 가짜 엔티티 `actor_1`이 함께 생겼습니다. 행동은 가짜 엔티티에 연결됐고, 그런데도 경고 없이 success로 저장됐습니다. 사용자는 이런 추정 복구 대신 실패로 두고 재생성하는 쪽을 택했습니다(11-13 절단 출력 복구 제거와 같은 방향).
+
+**처리 흐름.**
+
+| | 이전(`graph-text/v23`) | 현재(`graph-text/v24`) |
+| --- | --- | --- |
+| 단계 | JSON → 엄격 → 복구 → lenient(이름 형식만) | JSON → 엄격 → 복구. 그 밖은 `PARSE_FAILED` |
+| `[Context]` 헤더 누락 | 복구: 이름 형식만 | 복구: 두 형식 모두 |
+| `[Entities]` 헤더 누락 | `[Context]`도 없을 때만 복구, `[Context]`가 있으면 lenient | `[Context]` 유무와 관계없이 context 줄이 끝나는 곳에 넣음 |
+| 세미콜론으로 이어진 행동, 행동 사이 `none`, `tool:`·`place:` 라벨 | 복구: 이름 형식만 | 복구: 두 형식 모두 |
+| 미선언 참조 | 이름 형식은 새 엔티티, ID 형식은 `unknown` | 같음(ID에는 붙일 이름이 없음) |
+
+lenient 단계에서만 처리하던 다음 출력은 이제 `PARSE_FAILED`입니다. `[Entities]`·`[Actions]` 헤더가 둘 다 없는 출력, 한 줄 섹션(`Entities: a; b`), target 뒤 라벨 없는 슬롯 3개 이상, 네 번째 행동 구간, 공백 없는 구분자(`man -捞取- fish`), `unknown` 이름의 엔티티, `tool:`·`place:`가 아닌 라벨, 같은 라벨 반복, 출력 뒤에 이어지는 두 번째 그래프가 여기에 해당합니다.
+
+**저장된 Run에 미치는 영향(읽기 전용으로 측정, 파일 수정 없음).** 성공 행은 원문 없이 구조화 그래프만 저장되므로 다시 파싱되지 않고 결과도 바뀌지 않습니다. 따라서 이전에 lenient로 살린 장면이 몇 건인지는 측정할 수 없었습니다. 원문이 남아 있는 `PARSE_FAILED` 행을 현재 파서로 다시 읽은 결과는 아래와 같습니다.
+
+| Run | `PARSE_FAILED` 원문 행 | 현재 파서로 읽힘 |
+| --- | --- | --- |
+| `R05_v8_261105`(v8, 2B) | 3,345 | 2,806 |
+| `R05_v8_8b_261106`(v8, 8B) | 1,274 | 99 |
+| `R11_v9_261113`(Gemini, 두 데이터셋) | 4 · 4 | 0 · 0 |
+| `R12_v10_261113`(Gemini, 두 데이터셋) | 1 · 2 | 0 · 0 |
+
+- v8 2B에서 새로 읽히는 2,806건 중 2,188건은 행동을 세미콜론으로 한 줄에 이은 출력입니다.
+- `--force` 없이 이 Run들을 다시 실행하면, 생성 전 재분류 단계에서 이 행들이 구조화 그래프로 바뀌고 재생성 대상에서 빠집니다.
+- 이렇게 복구된 그래프 중 일부는 target이 빠진 행동(`p1 - looking at p3; none; l1`)을 `looking at p3` / target `unknown`으로 읽습니다. 이름 형식에 적용하던 규칙을 ID 형식에도 똑같이 적용한 결과입니다.
+- 장면 파일이 다시 쓰이면 Graph 입력은 콘텐츠 해시로 연결되어 있어 다시 만들어질 것으로 보고, 입력 버전(`scene-bge-inputs/v4`)은 올리지 않았습니다. 이 동작은 따로 테스트하지 않았습니다.
+
+**검증.** `vc_cloud`에서 전체 테스트 38개와 `ruff check src tests`가 통과했습니다. lenient 전용 동작을 검사하던 테스트는 `PARSE_FAILED`를 기대하도록 바꿨습니다. ID 형식이 같은 복구를 받는지 확인하는 검사와, v8·v8_2·v9·v10 프롬프트의 모든 예시가 `native`로 파싱되는지 확인하는 검사를 추가했습니다.
+
+**미검증.** 실제 생성에서 `PARSE_FAILED`가 얼마나 늘어나는지, 그로 인한 재생성 비용은 확인하지 않았습니다. 이름 형식 소형 모델(v9_core·v10_core, 2B)의 원문은 남아 있지 않아서 lenient 제거의 영향을 측정하지 못했습니다. 새로 복구되는 v8 장면의 의미 정확도와 추천 성능 영향도 확인하지 않았습니다.
+
+### 2026-11-15: v8_2 역할 기반 ID(`actor_1` 등)와 place 용어 적용
+
+[scene_graph_v8_2](../prompts/scene_graph_v8_2.md)를 제자리에서 수정했습니다. v8_2로 생성한 Run이 없고 코드·설정에서 참조하지 않아 새 파일을 만들지 않았습니다. 사용자는 `p1`·`f1`·`t1`·`b1`처럼 의미를 알 수 없는 ID가 많이 쓰이는 것을 문제로 지적했습니다.
+
+**변경.**
+
+| | 이전 v8_2 | 현재 v8_2 |
+| --- | --- | --- |
+| ID | 짧은 임의 ID(`p1`, `f1`, `c1`, `l1`) | 첫 행동에서 맡는 역할 + 역할별 번호: `actor_1`, `target_1`, `tool_1`, `place_1`. 행동에 쓰이는 개체만 선언 |
+| 역할이 바뀌는 개체 | 해당 없음 | 첫 ID를 유지(예: `target_1`이 뒤 행동에서 actor가 될 수 있음) |
+| 장소 용어 | `location` | `place`(ID 접두어와 내부 필드명에 맞춤) |
+| 출력 형식 줄 | `actor - action - target; tool; location` | `actor_1 - action - target_1; tool_1; place_1` |
+| 예시 | 임의 ID | 같은 내용을 새 ID로 바꿈. 행동에 쓰이지 않던 도마는 삭제. 행동이 없는 메이크업 비교 예시는 Entities도 `none` |
+| 행동 없는 개체 | "Informative entities without actions are valid" | 삭제. "Declare only entities used in Actions"로 대체 |
+
+- `actor1`이 아니라 `actor_1`을 쓴 이유는 역할 이름과 번호가 눈에 띄게 구분되기 때문입니다(사용자와 논의). 파서 ID 정규식(`[\w.-]+`)은 두 형태 모두 받습니다.
+- "IDs cannot be none or unknown" 문장은 새 ID 규칙이 대신하므로 뺐습니다.
+- 처음에는 행동에 나오지 않는 개체를 `entity_1`로 쓰게 했으나, 사용자 결정에 따라 `entity_x`를 출력하지 않도록 이 규칙을 지웠습니다. 그 결과 행동이 없는 설명·비교·정적 장면에서는 엔티티 정보도 남지 않고 Context만 남습니다.
+
+**이 항목에서 함께 기록하는 v8 → v8_2 차이.** v8_2는 2026-11-13 커밋 `cc10463`에서 변경 이력 없이 추가됐으므로, 파일 diff로 확인한 내용을 여기에 남깁니다. 상한 확대(topics 3→4개·4→5단어, 엔티티 6→8, 속성 2→3, 행동 4→6), 구체적 kind·topics 요구, `-ing 동사 + 1~3단어` 행동 형식과 감정·강도 부사 금지, 자막·화면 숫자를 행동·속성 근거로 쓰지 않음, 역할 슬롯 자유 텍스트 금지, 같은 키프레임에 함께 나올 때만 actor–target 연결, 쉼표 대신 세미콜론, 예시 교체입니다. 당시 설계 의도는 기록이 없어 확인하지 못했습니다.
+
+**호환성.** 출력은 기존 ID 형식(v8)과 같은 구조이며 파서·스키마는 바꾸지 않았습니다. 세 예시를 `parse_or_repair_graph`에 넣어 모두 `native`로 파싱되고 ID·역할이 그대로 보존되는 것을 확인했습니다. 다만 엄격·복구 파싱이 모두 실패한 뒤의 lenient 경로에서, ID 형식을 거부하는 검사(`_ID_FORM_ROW`, `[A-Za-z]{1,3}\d+:`)가 `actor_1:`를 ID 형식으로 인식하지 못합니다. 이 경우 `actor_1 woman` 같은 이름 형식으로 잘못 읽힐 수 있으며, 아직 고치지 않았습니다.
+
+**미검증.** 실제 모델 생성은 하지 않았습니다. 모델이 역할 접두어를 지키는지, 첫 역할 기준 명명이 역할 혼동이나 파싱 실패를 늘리는지, 추천 성능에 영향이 있는지는 확인하지 않았습니다.
+
+### 2026-11-13: TRASH_INFO 제거와 REPEAT_OCCURRED 추가 (`graph-text/v23`)
+
+프롬프트 파일은 변경하지 않았습니다. 장면 결과 판정과 진행바를 바꿨습니다(사용자 결정).
+
+**변경.**
+
+| | 이전(`graph-text/v22`) | 현재(`graph-text/v23`) |
+| --- | --- | --- |
+| warning 우선순위 | `TOKEN_LIMIT` > `PARSE_FAILED` > `TRASH_INFO` | `TOKEN_LIMIT` > `PARSE_FAILED` > `REPEAT_OCCURRED` |
+| 정보 없는 그래프 | `TRASH_INFO`로 입력 제외·재생성 | 판정하지 않음. 구조화되면 success로 사용 |
+| 반복 직전에 멈춘 출력 | 태그 없음(success) | `REPEAT_OCCURRED`. 입력에 사용하고 재생성하지 않으며 집계만 따로 함 |
+| 진행바·`generation_stats.json` | `success`·`parse_failed`·`trash_info`·`token_limit`·`error` | `success`·`repeat_occurred`·`parse_failed`·`token_limit`·`error` |
+
+- `REPEAT_OCCURRED`는 `--stop-repeated-lines`(로컬 Qwen Graph 전용)로 생성을 끝내고 마지막 중복 줄을 버린 장면에만 붙습니다. 남은 출력이 파싱되지 않으면 `PARSE_FAILED`가 우선합니다.
+- `token_limit`은 반복 중단을 켜도 대상만 바꾸는 변형 루프 등으로 생길 수 있어 진행바에 남겼습니다.
+
+**호환성.** 저장된 `TRASH_INFO` 태그는 읽을 때 버리고 현재 규칙으로 다시 판정합니다. `--force` 없이 재실행하면 해당 행의 태그가 비워지고 재생성하지 않습니다. 이전에 제외되던 장면이 입력에 들어가므로 Graph 입력 버전을 `scene-bge-inputs/v4`로 올렸고, 기존 임베딩 캐시는 다시 만들어집니다.
+
+**검증한 것.** 단위·통합 테스트 37개가 통과했습니다. 반복 중단 장면이 `REPEAT_OCCURRED`로 저장·집계되고, 입력에 쓰이며, 재실행 때 다시 생성되지 않는지 확인했습니다.
+
+**미검증.** 실제 Run에서 `REPEAT_OCCURRED` 비율과, 이전 `TRASH_INFO` 장면을 입력에 넣은 것이 추천 성능에 주는 영향은 확인하지 않았습니다.
+
+### 2026-11-13: v10_core·v10_extended 재작성(현재 v9 기준 간소화)
+
+삭제된 v10 두 파일을 현재 [v9_core](../prompts/scene_graph_v9_core.md)·[v9_extended](../prompts/scene_graph_v9_extended.md)(바로 아래 항목의 반복 방지 규칙 포함)를 기준으로 다시 간소화해 [v10_core](../prompts/scene_graph_v10_core.md)와 [v10_extended](../prompts/scene_graph_v10_extended.md)로 새로 만들었습니다. v9 두 파일은 바꾸지 않았습니다. extended가 core 전문으로 시작하고 `[Additional Instructions]` 블록만 덧붙이는 구조는 같습니다.
+
+**분량(예시 제외 본문, 빈 줄 제외).**
+
+| 프롬프트 | 줄 수 | 단어 수 |
+| --- | --- | --- |
+| v9_core → v10_core | 48 → 36 | 979 → 494 |
+| v9_extended → v10_extended | 66 → 51 | 1,371 → 805 |
+
+**간소화 방식.** 이전 v10과 같은 원칙입니다(아래 "v10_2b·v10_8b 신규(간소화)" 항목 참고).
+
+- `[Selection and Evidence]` 5개 항목을 `[Evidence]` 2개로 줄였습니다.
+- 드문 경우를 막는 방어 규칙을 빼고, 긴 금지 규칙을 짧은 긍정문으로 바꿨습니다.
+- 출력 형식, 상한(core 엔티티 6·속성 2·행동 4·주제 3, extended 8·3·6·4), 예시(core 3개, extended 5개)는 v9와 같습니다. extended의 추가 블록은 삭제 전 v10_extended의 것을 그대로 썼습니다.
+- 같은 종류 셋 이상은 그룹 엔티티로 쓰는 규칙을 유지했습니다(v9에는 없음).
+
+**삭제 전 v10과의 차이.** 본문은 거의 같고 `[Actions]`와 `[Output Format]`만 다릅니다.
+
+| | 삭제 전 v10(커밋 `0d351f4`) | 현재 v10 |
+| --- | --- | --- |
+| 반복 방지 | 없음 | v9의 4개 규칙을 3줄로 줄여 넣음: 이름 없는 동사구, 각 행동은 한 번(공동 행동도 한 번), 마지막 행동 뒤에 멈춤 |
+| 교대 금지 문장 | 없음 | 넣지 않음("모든 줄은 앞의 줄과 달라야 한다"로 대신) |
+| "Every action line holds exactly one action." | 있음 | 뺌(바로 위의 "한 줄에 두 행동을 쓰지 않는다"와 중복) |
+
+**호환성.** 출력 형식, 스키마, 파서(`graph-text/v22`)는 바뀌지 않습니다. 파일 이름은 같지만 삭제 전 v10과 프롬프트 해시가 다릅니다.
+
+**검증한 것.** 두 파일의 예시가 `native`로 파싱되는지와 extended가 core 전문으로 시작하는지를 기존 테스트로 확인했습니다.
+
+**미검증.** 이 프롬프트로는 한 장면도 생성하지 않았습니다. 간소화와 반복 방지 규칙이 출력 품질, 반복 루프, TOKEN_LIMIT에 주는 영향은 확인되지 않았습니다.
+
+### 2026-11-13: v9·v10에 행동 반복 방지 규칙 추가
+
+[v9_core](../prompts/scene_graph_v9_core.md), [v9_extended](../prompts/scene_graph_v9_extended.md), [v10_core](../prompts/scene_graph_v10_core.md), [v10_extended](../prompts/scene_graph_v10_extended.md) 네 파일의 `[Actions]` 규칙에 문장을 추가했습니다. 버전 번호는 올리지 않았으므로 프롬프트 해시가 바뀝니다. extended가 core 전문으로 시작하는 구조는 그대로입니다.
+
+**이유.** R11 qwen3vl_2b(v9_core, repetition_penalty 1.05, 512토큰)의 부분 집계에서 TOKEN_LIMIT 3,817건 중 97.5%가 반복 루프로 끝났습니다. 근거는 [분석 보고서](../artifacts/runs/R11_v9_261113/reports/token_limit_repetition.md)입니다.
+
+- 94.7%가 Actions 섹션에서 잘렸고, 정확 반복의 84%는 주기 1~4줄이었습니다.
+- 루프는 대화·시선 행동을 참가자 조합별로 되풀이하는 형태가 중심이었습니다.
+- 루프의 38%는 `man1 - looking at man2 - man2`처럼 동사에 대상 이름을 넣고 target을 또 썼습니다.
+
+**추가한 규칙.**
+
+| 규칙 | v9 | v10 |
+| --- | --- | --- |
+| 행동은 한 번만 쓰고, 모든 행동 줄은 앞의 줄과 달라야 함 | 추가(앞 행동으로 돌아가거나 교대하지 않는다는 문장 포함) | 추가 |
+| 상호·공동 행동(예: talking)은 참가자마다 쓰지 않고 한 번만 씀 | 추가(쌍마다 쓰지 않는다는 표현 포함) | 추가 |
+| 행동은 엔티티 이름이 없는 동사구로 씀 (`woman - pointing at - dish`) | 추가 | 추가 |
+| 마지막으로 구별되는 행동 뒤에 멈춤. 상한보다 적어도 됨 | 추가 | 추가 |
+
+- 행동 수 상한(core 4개, extended 6개)은 바꾸지 않았습니다.
+- 같은 actor와 target의 행동을 한 번만 쓰게 하는 규칙은 넣지 않았습니다. extended 예시의 `potter - shaping - clay` / `potter - trimming - clay`처럼 같은 쌍에 서로 다른 행동이 정당한 경우가 있기 때문입니다.
+- 예시 문장은 시선 행동을 유도하지 않도록 `looking at` 대신 `pointing at`을 썼습니다.
+- Entities의 번호 세기 루프(TOKEN_LIMIT의 약 5%)에 대한 규칙은 이번에 추가하지 않았습니다.
+
+**호환성.** 출력 형식, 스키마, 파서(`graph-text/v22`)는 바뀌지 않습니다. 프롬프트 해시가 바뀝니다. 이전 프롬프트로 생성한 Run을 `--force` 없이 이어서 실행해도 막히지는 않지만, `generation_identity.json`에는 처음 실행의 프롬프트 해시가 남아 한 디렉터리에 두 프롬프트의 출력이 섞입니다.
+
+**검증한 것.** 네 프롬프트의 예시가 그대로 `native`로 파싱되는지 기존 테스트로 확인했습니다.
+
+**미검증.** 이 규칙으로는 한 장면도 생성하지 않았습니다. 규칙이 반복 루프와 TOKEN_LIMIT을 줄이는지, 정당한 행동까지 줄이는지, 소형 모델이 예시 줄(`woman - pointing at - dish`)을 베끼는지는 확인되지 않았습니다.
+
+### 2026-11-13: 장면 결과를 warning 3종과 error로 단순화 (`graph-text/v22`)
+
+프롬프트 파일은 변경하지 않았습니다. 다운스트림(BGE 임베딩·Graph 입력)이 실제로 요구하는 조건보다 파서가 엄격해서, 사용 가능한 출력까지 실패로 처리하던 문제를 고쳤습니다. 다운스트림의 요구 조건은 세 가지입니다.
+
+- Context: medium·format은 빈 문자열이 아니어야 하고, topics는 문자열 목록이어야 합니다.
+- 엔티티: 이름이 빈 문자열이 아니어야 합니다.
+- 행동: 행동 문구가 빈 문자열이 아니어야 하고, 역할은 선언된 엔티티·`none`·`unknown` 중 하나여야 합니다.
+
+**판정 체계(사용자 결정).** 장면당 결과는 하나이며, warning이 겹치면 `TOKEN_LIMIT` > `PARSE_FAILED` > `TRASH_INFO` 순으로 하나만 붙습니다.
+
+| 결과 | 조건 | 대상 |
+| --- | --- | --- |
+| success | 구조화 성공, 정보 있음 | Graph, Description |
+| `PARSE_FAILED` | Context 세 필드, Entities(또는 `none`), Actions(또는 `none`) 중 하나라도 분리하지 못함 | Graph |
+| `TRASH_INFO` | medium·format·topics가 전부 unknown/none이거나, 이름 있는 엔티티와 행동이 하나도 없음 | Graph |
+| `TOKEN_LIMIT` | 출력 토큰 한도에서 잘림(기존 error). 원문만 저장하고 파싱하지 않음 | Graph, Description |
+| error | 위에 해당하지 않는 생성 실패 | Graph, Description |
+
+`MISSING_REQUIRED`는 `PARSE_FAILED`로 통합했습니다. warning 장면은 BGE·Graph 입력에서 모두 제외합니다. 재실행 시와 다음 penalty 패스에서는 warning 장면도 다시 생성합니다. penalty가 바뀌면 PARSE_FAILED·TRASH_INFO 출력도 바뀌기 때문입니다.
+
+**파서 변경.**
+
+- **처리 순서**: 엄격 파싱과 구분자 복구가 실패하면 이름 형식에 한해 줄 모양으로 섹션을 나누는 완화 단계를 거칩니다.
+- **완화 단계의 처리**:
+  - 헤더가 없거나 한 줄로 쓴 형식(`Entities: a; b`)도 읽습니다.
+  - 행동은 앞 세 구간만 씁니다. 공백 없는 구분자도 인정합니다.
+  - 라벨 없는 슬롯이 3개 이상이면 tool·place를 구분할 수 없어 모두 버립니다. `tool:`·`place:`가 아닌 라벨도 버립니다.
+  - `unknown`·`none` 이름의 엔티티 줄은 버리고, 이름의 콜론은 공백으로 바꿉니다. 같은 이름을 참조하는 역할도 같은 이름으로 연결합니다.
+  - 출력에 그래프가 여러 개 이어져 있으면 첫 그래프만 씁니다.
+- **유지한 동작**: 내용을 새로 만들지 않습니다. ID 형식(v8)과 JSON 경로는 기존과 같습니다.
+
+**연동 변경.**
+
+- **진행바**: `success=… parse_failed=… trash_info=… token_limit=… error=…` 형식입니다. Description은 `success`·`token_limit`·`error`만 표시합니다.
+- **`generation_stats.json`**: Graph·Description 모두 같은 키로 기록합니다. 기존 `warning`·`failed`·`warning_counts` 키는 없어졌습니다.
+- **저장 형식**: Description 행은 `TOKEN_LIMIT`일 때만 `warning` 필드를 가집니다.
+- **판정 일치**: 저장된 warning은 읽을 때 다시 판정하지 않고 그대로 따릅니다. 이전에는 Graph 입력 단계만 문자열을 다시 파싱해, 추출 단계와 판정이 달랐습니다.
+- **Graph 입력 제외 사유**: `parse_failed`·`trash_info`·`token_limit`·`error`로 기록합니다. 입력 버전은 `scene-bge-inputs/v3`입니다.
+
+**호환성.**
+
+- **태그 변환**: 기존 태그는 읽을 때 `MISSING_REQUIRED`·`PARSE_ERROR` → `PARSE_FAILED`, `TRUNCATION_RECOVERED` → `TOKEN_LIMIT`로 변환합니다.
+- **재실행 시 재분류**: `--force` 없이 재실행하면 생성 전에 저장된 행에 현재 규칙을 적용하고, 바뀐 파일만 다시 씁니다.
+  - 기존 절단 error 행은 원문을 가진 `TOKEN_LIMIT` 행이 됩니다.
+  - `PARSE_FAILED` 원문은 현재 파서로 다시 읽습니다.
+  - 태그 없는 구조화 행에는 `TRASH_INFO` 판정을 적용합니다.
+
+**검증 범위.**
+
+- `vc_cloud`에서 전체 테스트 104개와 `ruff check src tests`가 통과했습니다.
+- R10 v9 microlens_100k(각 115,947장면)의 저장 행에 재분류 규칙을 읽기 전용으로 적용했습니다(파일 미수정).
+
+  | 모델 | 저장 상태 | 현재 규칙 적용 |
+  | --- | --- | --- |
+  | 2B | success 104,970 / recovered 10,572 / 경고 371 / error 34 | success 105,275 / token_limit 10,606 / trash_info 66 / parse_failed 0 |
+  | 8B | success 113,785 / recovered 594 / 경고 1,563 / error 5 | success 115,211 / token_limit 599 / trash_info 127 / parse_failed 10 |
+
+  8B의 trash_info 중 118건은 기존 success 행(엔티티·행동이 모두 없는 장면)이고, parse_failed 10건은 헤더 없이 행동 줄과 `none`이 모두 없는 출력입니다.
+- 완화 단계가 만든 그래프의 정확성은 표본 몇 건만 눈으로 확인했습니다. 추천 성능에 미치는 영향은 확인하지 않았습니다.
+
+### 2026-11-13: 토큰 상한 절단 출력 복구 제거 (`graph-text/v21`)
+
+프롬프트 파일은 변경하지 않았습니다. 2026-11-11에 추가한 절단 출력 복구(`recover_truncated_graph`, `TRUNCATION_RECOVERED`)를 제거했습니다.
+
+**변경 이유.** R10 v9 `graph_qwen3vl_2b`에서 recovered가 115,947장면 중 10,572건(9.1%)이었습니다. 복구는 완전히 같은 줄만 합치고 엔티티 8·속성 3·행동 6개에서 자르는 규칙이라, `man1`…`man8` 같은 번호 세기 반복은 상한까지 그대로 남았고(엔티티 구간 절단 1,959건 중 1,223건이 같은 이름 번호 5개 이상), 행동 0개인 장면도 recovered로 집계되었습니다. 반복 직전까지의 내용이 맞는지도 확인하지 않습니다. 사용자 결정에 따라 임의 복구 대신 절단 장면을 실패로 두고, 생성 설정(penalty·토큰 한도)을 바꿔 다시 생성하는 방향으로 전환합니다.
+
+**처리 변경.**
+
+- 잘린 출력(Qwen `finish_reason=length`, Gemini `MAX_TOKENS`)은 v17 이전처럼 `graph: output truncated at token limit` 실패로 원문과 함께 저장하고, 재실행 시 다시 생성합니다. 다중 penalty 패스에서는 마지막 패스까지 재시도합니다.
+- 저장된 절단 실패 행을 재실행 시 제자리에서 복구하던 경로를 제거했습니다.
+- 진행 표시와 `generation_stats.json`의 `recovered` 집계를 제거했습니다. 한 장면은 success·warning·failed 중 하나입니다.
+
+**호환성.** 기존 Run에 저장된 `warning: ["TRUNCATION_RECOVERED"]` 행은 읽기 오류 없이 경고로 취급합니다. 추천 입력·진단에서 제외되고, 같은 Run을 다시 실행하면 재생성 대상이 됩니다. `generation_stats.json`의 `warning_counts`에 `TRUNCATION_RECOVERED`가 나타날 수 있습니다. 원본 파일은 재실행 전까지 수정하지 않습니다.
+
+**검증 범위.** `vc_cloud`에서 전체 테스트 90개와 `ruff check src tests`가 통과했습니다. 회귀 테스트는 절단 출력의 실패 저장과 재생성, 기존 복구 행의 재생성을 확인합니다. 실제 모델로 다시 생성하지는 않았으며, 높은 penalty나 큰 토큰 한도가 절단을 줄이는지는 확인하지 않았습니다.
+
+### 2026-11-13: v9·v10의 tool·place 라벨화와 줄 배치 템플릿
+
+[v9_core](../prompts/scene_graph_v9_core.md), [v9_extended](../prompts/scene_graph_v9_extended.md), [v10_core](../prompts/scene_graph_v10_core.md), [v10_extended](../prompts/scene_graph_v10_extended.md) 네 파일을 같은 파일에서 수정했습니다. 버전 번호는 올리지 않았으므로 같은 이름이라도 이 날짜 이전과 이후는 다른 프롬프트입니다(프롬프트 해시가 바뀝니다). extended가 core 전문으로 시작하는 구조는 그대로입니다.
+
+**이유.** 행동 줄의 `; knife; kitchen`은 위치만으로 tool과 place를 구분해 직관적이지 않고, 해당 없는 칸도 `none`·`unknown`으로 채워야 했습니다. 또 출력 형식을 “medium: value, format: value, topics: value; value”처럼 한 문장으로 설명해, 필드마다 줄을 바꿔야 한다는 점이 형식 설명에서 드러나지 않았습니다.
+
+**행동 줄 형식.**
+
+| | 이전 | 현재 |
+| --- | --- | --- |
+| tool·place 있음 | `chef - cutting - sea urchin; knife; kitchen` | `chef - cutting - sea urchin; tool: knife; place: kitchen` |
+| tool만 있음 | `man1 - sanding - wooden board; sanding block; unknown` | `man1 - sanding - wooden board; tool: sanding block` |
+| 둘 다 없음 | `man2 - carrying - wooden board; none; unknown` | `man2 - carrying - wooden board` |
+| target 없음 | `enemy character - falling - none; none; rooftop` | `enemy character - falling - none; place: rooftop` |
+
+- actor·action·target은 항상 쓰고, target이 없으면 이전처럼 `none`을 씁니다.
+- `tool:`과 `place:`는 해당할 때만 이 순서로 붙이고, 아니면 칸을 생략합니다. 생략한 tool은 `none`, 생략한 place는 `unknown`으로 저장되어 이전 기본값과 같습니다.
+- 행동 줄에 번호(`action1:`)는 붙이지 않습니다. R10의 2B가 이름의 38%에 번호를 붙이고 반복 루프를 보인 점을 근거로 한 판단이며, 번호 유무를 비교한 실험은 없습니다.
+- 콜론은 medium·format·topics·tool·place 뒤에만 쓴다는 문장을 v9에 추가했습니다.
+
+**줄 배치.** `[Output Format]`의 한 문장 설명을 실제 줄 배치를 그대로 보여 주는 템플릿으로 바꾸고, “섹션 헤더·context 필드·엔티티·행동마다 줄을 바꾸고 한 줄에 두 개를 쓰지 않는다”는 문장을 추가했습니다. 섹션 사이에 빈 줄은 넣지 않습니다(예시와 동일).
+
+**함께 바뀐 문장.** v9는 tool·place 역할 정의에 “없으면 칸을 생략”을 넣고 “The place default is unknown. Defaults are not observations.”를 “생략한 tool은 none, 생략한 place는 unknown; 칸을 채우려고 쓰지 않는다”로 바꿨습니다. v10은 “Every action line has all five slots”를 뺐습니다. 예시의 행동 줄은 모두 새 형식입니다.
+
+**파서 변경(`graph-text/v20`, 이름 형식만).**
+
+- 엄격 파싱이 `; tool: 이름`, `; place: 이름`을 읽습니다. 각각 생략할 수 있고 순서가 바뀌어도 읽습니다. 같은 라벨이 두 번 나오거나 값이 비면 엄격 파싱은 실패합니다.
+- 이전의 위치 형식(`; knife; kitchen`)도 그대로 읽으므로 기존 v9 생성분의 파싱 결과는 바뀌지 않습니다. 다만 tool·place 없이 `actor - action - target`만 쓴 줄은 이전에는 `repaired`였고 이제 `native`입니다(그래프 내용은 같습니다).
+- 복구 파싱은 `Tool : knife`처럼 대소문자·공백이 다른 라벨, 값이 빈 라벨(기본값 처리), 라벨과 위치 표기가 섞인 줄, 세미콜론으로 이어 쓴 라벨 행동을 읽습니다.
+- ID 형식(v8)은 라벨을 받지 않으며 동작이 바뀌지 않습니다.
+
+**검증한 것.** 네 프롬프트의 예시가 모두 `native`로 파싱되는지와 위 파서 동작을 테스트에 추가했고, 전체 테스트 91개가 통과했습니다.
+
+**미검증.** 이 형식으로는 한 장면도 생성하지 않았습니다. 라벨이 tool·place 혼동을 줄이는지, 칸 생략이 8B의 place 과다 기입(R10에서 86%)을 줄이는지, 템플릿의 `value`·`name` 자리표시를 소형 모델이 그대로 베끼지 않는지, 줄 배치 템플릿이 줄바꿈 오류를 줄이는지는 모두 확인되지 않았습니다. 칸 수가 줄마다 달라지는 것이 2B의 형식 안정성에 주는 영향도 확인이 필요합니다.
+
+### 2026-11-13: 파일 이름 변경 (_2b → _core, _8b → _extended)
+
+프롬프트 내용은 바꾸지 않고 파일 이름만 바꿨습니다. v9는 사용자가 직접 바꿨고, v10은 같은 규칙에 맞췄습니다.
+
+| 이전 | 현재 |
+| --- | --- |
+| `scene_graph_v9_2b.md` | [scene_graph_v9_core.md](../prompts/scene_graph_v9_core.md) |
+| `scene_graph_v9_8b.md` | [scene_graph_v9_extended.md](../prompts/scene_graph_v9_extended.md) |
+| `scene_graph_v10_2b.md` | [scene_graph_v10_core.md](../prompts/scene_graph_v10_core.md) |
+| `scene_graph_v10_8b.md` | [scene_graph_v10_extended.md](../prompts/scene_graph_v10_extended.md) |
+
+**이유.** extended는 core 전문에 확장 블록을 붙인 구조여서, 모델 크기가 아니라 프롬프트의 구성을 이름으로 나타냅니다. 어느 모델에 어느 프롬프트를 줄지는 실행할 때 `--schema`로 정합니다.
+
+**연동.** 프롬프트 해시는 파일 내용으로 계산하므로 이름 변경으로 바뀌지 않습니다. 테스트와 `README.md`의 경로를 새 이름으로 바꿨고, 구조 테스트는 v9·v10 모두에서 extended가 core로 시작하는지 확인합니다. 아래 이력의 본문은 당시 이름(v9_2b, v9_8b, v10_2b, v10_8b)을 그대로 쓰며, 링크만 새 파일을 가리킵니다. `run_script.sh`는 사용자 스크립트라 수정하지 않았습니다.
+
+### 2026-11-13: v10_8b를 공통 코어(v10_2b) + 확장 블록 구조로 재작성
+
+[scene_graph_v10_8b](../prompts/scene_graph_v10_extended.md)를 같은 파일에서 다시 썼습니다. [scene_graph_v10_2b](../prompts/scene_graph_v10_core.md)는 바꾸지 않았습니다. 바로 아래 항목의 v9와 같은 구조이며 이유도 같습니다(2B·8B 비교에서 프롬프트 차이를 확장 블록 하나로 분리). v10 프롬프트는 두 파일 모두 아직 생성에 쓰인 적이 없습니다.
+
+**구조.** v10_8b = v10_2b 전문 + `[Additional Instructions]` 블록입니다. 테스트가 v9와 v10 모두에서 8B 파일이 2B 파일로 시작하는지 확인합니다. 분량은 코어 552단어 + 확장 약 400단어입니다.
+
+**확장 블록의 내용.** v9의 확장보다 짧습니다. v10_2b 코어에 이미 “place는 구체적인 장소가 보일 때만”, “자세·표정은 속성”, “첫 줄은 [Context]”가 있어 확장에서 반복하지 않습니다.
+
+- 상한 교체: 엔티티 8·속성 3·행동 6·주제 4.
+- Context: medium·format 값별 정의, 구체적인 주제.
+- Entities: 같은 엔티티로 잇는 조건, 사용자명·점수·숫자 금지, 인터페이스는 엔티티가 아님, 결과 상태 속성.
+- Actions: 일어난 순서와 구체적인 동사, 대상 없는 말은 행동이 아님, target none은 동작 자체가 내용일 때만.
+- Output: 쉼표 금지.
+- 추가 예시 2개: 게임 플레이, 말다툼(place unknown).
+
+**이전 v10_8b와의 차이.** 코어의 문장과 예시 3개(요리 한 단계, 두 남자 목공, 메이크업)로 통일되어 이전의 요리 여러 단계 예시와 “한 명은 서 있기만 하는” 목공 예시가 없어졌습니다. 코어의 “같은 종류가 셋 이상이면 그룹 엔티티” 규칙이 8B에도 들어갑니다. 이전 v10_8b에 있던 역할 이름 예시(`soldier`, `street vendor`)와 “man·woman은 역할이 안 보일 때만”은 코어의 “보이는 역할로 이름 붙이기” 한 문장으로 대체됐습니다. demonstration 정의는 v9 확장과 같은 문장입니다.
+
+**연동.** 출력 형식은 그대로여서 파서(`graph-text/v19`)는 바뀌지 않습니다.
+
+**미검증.** 생성에 쓴 적이 없어 효과는 전부 확인되지 않았습니다. 한 프롬프트에 상한이 두 번 나오는 구조를 8B가 확장 쪽으로 따르는지도 v9와 마찬가지로 확인이 필요합니다.
+
+### 2026-11-13: v9_8b를 공통 코어(v9_2b) + 확장 블록 구조로 재작성
+
+[scene_graph_v9_8b](../prompts/scene_graph_v9_extended.md)를 같은 파일에서 다시 썼습니다. [scene_graph_v9_2b](../prompts/scene_graph_v9_core.md)는 한 글자도 바꾸지 않았습니다(프롬프트 해시 유지, R10의 2B 생성분과 계속 일치). 아래 두 항목(같은 날의 v9_8b 규칙 수정, v10 신규)보다 나중 작업입니다.
+
+**이유.** 두 파일을 따로 써 온 탓에 같은 규칙도 문장이 달랐고 예시 내용도 달라서, 2B와 8B 결과의 차이에 모델 크기와 프롬프트 차이가 섞여 있었습니다. 또 8B 전용 규칙은 MicroLens 출력에서 본 증상마다 하나씩 붙인 것이어서 데이터에 맞춘 측면이 있었습니다. 공통 부분을 글자 그대로 같게 두고 8B에 더한 부분만 따로 떼어, 그 효과를 분리해 잴 수 있게 했습니다.
+
+**구조.**
+
+- v9_8b = v9_2b 전문 + `[Additional Instructions]` 블록입니다. 테스트가 v9_8b가 v9_2b로 시작하는지 확인합니다.
+- 확장 블록은 “위 지시에 더하며, 다르면 이쪽을 따른다”로 시작합니다.
+
+**확장 블록의 내용.**
+
+- 상한 교체: 엔티티 8·속성 3·행동 6·주제 4(코어는 6·2·4·3).
+- Context: medium·format 값별 정의, 구체적인 주제 권장.
+- Entities: 화면 문자열·사용자명·점수·숫자 금지, 결과 상태 속성, 구체적인 장소만 선언, 인터페이스 엔티티 금지.
+- Actions: 일어난 순서, 구체적인 동사, 참여자 간 관계, 자세·표정·대상 없는 말은 속성으로, 한 엔티티 한 역할.
+- Output: 첫 줄 `[Context]`, 쉼표 금지.
+- 추가 예시 3개: 도자기(여러 단계와 결과 상태), 게임 플레이, 말다툼(place unknown).
+
+**이전 v9_8b와의 차이.**
+
+- 코어에 있던 규칙이 8B에도 들어갑니다: “한 줄에 한 행동, 세미콜론으로 잇지 않기”, “actor는 tool이 될 수 없음”.
+- 코어의 예시 3개(요리 한 단계, 두 남자 목공, 메이크업)를 그대로 쓰므로, 이전 v9_8b의 요리 여러 단계 예시와 “한 명은 서 있기만 하는” 목공 예시는 없어졌습니다. 여러 단계 예시는 도자기 예시로 대신했습니다.
+- 금지 단어 나열을 줄였습니다: place의 `indoor`·`outdoor`·`background`·`room` 금지 목록, 자세·상태 동사 10개 나열, 모호한 동사 목록을 빼고 짧은 긍정문으로 바꿨습니다.
+- demonstration 정의를 “과제나 기법을 하는 법을 보여 줌(레시피, 튜토리얼, 공예 작업)”으로 완화했습니다. 코어의 목공 예시가 demonstration이어서, 직전 수정의 “따라 하도록 단계로 구성된 how-to”와는 맞지 않기 때문입니다.
+- 코어와 겹치던 8B 전용 문장(역할 정의, none·unknown, 근거 원칙 등)은 코어의 문장으로 통일됐습니다.
+
+**연동.** 출력 형식은 그대로여서 파서(`graph-text/v19`)와 스키마는 바뀌지 않습니다. v9_8b의 프롬프트 해시가 바뀌므로 이전 v9_8b로 만든 생성분(R10의 8B, 그리고 같은 날 수정본으로 생성했다면 그 Gemini 생성분)과는 다른 프롬프트입니다. v10_2b·v10_8b는 이 구조를 따르지 않고 그대로 둡니다.
+
+**미검증.** 이 v9_8b로는 아직 생성하지 않았습니다. 한 프롬프트 안에 상한이 두 번 나오는 구조(코어의 6·2·4·3과 확장의 8·3·6·4)를 모델이 확장 쪽으로 따르는지, 확장 블록이 코어만 쓴 경우보다 8B 출력을 낫게 하는지는 확인되지 않았습니다. 후속 과제는 8B에 v9_2b(코어만)와 v9_8b(코어+확장)를 같은 장면 표본으로 돌려 비교하는 것이고, 차이가 없으면 프롬프트를 하나로 합칠 수 있습니다.
+
+### 2026-11-13: v10_2b·v10_8b 신규(간소화)
+
+[scene_graph_v10_2b](../prompts/scene_graph_v10_core.md)와 [scene_graph_v10_8b](../prompts/scene_graph_v10_extended.md)를 새로 추가했습니다. v9_2b와 아래 항목에서 수정한 v9_8b는 그대로 남깁니다.
+
+**이유.** R10(`R10_v9_261111`)의 8B 출력에서 길게 쓴 금지 규칙은 지켜지지 않았고(자세·상태 행동 금지가 있는데도 `standing`의 92%가 target 없이 출력), 예시의 형태는 그대로 따라갔습니다(행동이 있는 예시 4개 중 3개가 place를 채웠고 8B 행동의 86%가 place를 채움). 같은 프롬프트를 Gemini는 더 잘 따랐습니다. 그래서 규칙 문장을 줄이고 예시는 유지하는 방향을 시험하려는 것입니다.
+
+**분량(예시 제외 본문).**
+
+| 프롬프트 | 줄 수 | 단어 수 |
+| --- | --- | --- |
+| v9_2b → v10_2b | 35 → 25 | 834 → 405 |
+| v9_8b(수정 후) → v10_8b | 57 → 41 | 1,473 → 670 |
+
+**유지한 것.** 출력 형식(세 섹션, 이름 직접 참조, 행동 5칸, 구분자, none·unknown)은 v9와 같아 파서는 그대로 씁니다. 상한(2B 엔티티 6·속성 2·행동 4·주제 3, 8B 8·3·6·4), 번호 붙이기, 역할 이름 권장, 8B의 medium·format 값별 정의, 예시(2B 3개, 8B 5개; 8B는 아래 항목에서 고친 예시)를 유지했습니다.
+
+**줄이거나 뺀 것.**
+
+- `[Selection and Evidence]` 5~6개 항목을 `[Evidence]` 2~3개로 합쳤습니다: 보이는 것만 쓴다, 화면 글자는 주제 단서로만 쓴다, (8B) 같은 엔티티는 근거가 있을 때만 잇는다.
+- 드문 경우를 막는 방어 규칙을 뺐습니다: 전달 대상 처리, 인과 추론, 화면 속 지시 따르기, 보이지 않는 조작자, 한 엔티티 한 역할, 행동 간 연결 금지, 선언 후 사용 문장(“[Entities]에서 그대로 복사”로 대체), 표현 의도와 묘사 내용의 구분.
+- 긴 금지 규칙을 짧은 긍정문으로 바꿨습니다: “자세·표정·대상 없는 말은 행동이 아니라 속성”, “place는 구체적인 장소가 보일 때만”, “인터페이스는 엔티티가 아님”(8B).
+- 8B의 format 정의에서 부정 설명(“~는 demonstration이 아니다”)을 뺐습니다.
+
+**v10_2b에만 추가한 것.** “같은 종류가 셋 이상이면 하나의 그룹 엔티티로 쓴다”를 넣었습니다. R10의 2B 출력에서 9.1%(10,572장면)가 토큰 상한에서 잘려 복구됐고 `man1`, `man2`…로 번호를 세다 잘린 경우가 포함되어 있어서입니다.
+
+**미검증.** v10 프롬프트로는 아직 한 장면도 생성하지 않았습니다. 간소화가 출력 품질이나 추천 성능을 높이는지, 뺀 규칙 중 실제로 필요했던 것이 있는지, 그룹 엔티티 규칙이 2B의 반복을 줄이는지는 모두 확인되지 않았습니다. 후속 과제로 v9_8b(수정 전·후)와 v10_8b, v9_2b와 v10_2b를 같은 장면 표본에 돌려 target 없는 행동 비율, place 비율, format 분포, 파싱 실패율, 절단 비율을 비교해야 합니다.
+
+### 2026-11-13: v9_8b 규칙·예시 수정, 섹션 헤더 누락 복구
+
+[scene_graph_v9_8b](../prompts/scene_graph_v9_extended.md)를 같은 파일에서 수정했습니다. R10의 기존 8B·Gemini 생성분은 수정 전 내용(프롬프트 해시 `447ec822…`, git 이력의 이전 버전) 기준입니다.
+
+**근거(R10, 장면 115,947개, Gemini는 8B와 같은 프롬프트로 생성).** 분석 코드와 수치는 `artifacts/runs/R10_v9_261111/reports/compare_2b_8b_gemini.py`와 `.json`에 있습니다.
+
+| 지표 | 2B | 8B | Gemini |
+| --- | --- | --- | --- |
+| target이 없는 행동 | 14% | 38% | 15% |
+| place를 채운 행동 | 30% | 86% | 63% |
+| 장면당 place로만 쓰인 엔티티 | 0.29 | 1.18 | 0.64 |
+| 약한 동사 비율(look·stand·hold·speak 등) | 46% | 34% | 16% |
+| format이 demonstration인 장면 | 6,430 | 12,526 | 5,700 |
+| Gemini와 format 일치 | 71.1% | 81.0% | — |
+
+추천 지표는 hgvrec-2b 0.043520 ± 0.0011, hgvrec-8b 0.043510 ± 0.0018, hgvrec-gemini 0.044278 ± 0.0002(NDCG@10)로, 2B와 8B의 차이는 표준편차 안입니다.
+
+**프롬프트 변경(v9_8b).**
+
+- 자세·상태 행동: “채우지 말라”는 권고를 구조 규칙으로 바꿨습니다. target none은 춤·노래·넘어짐처럼 동작 자체가 내용일 때만 쓰고, 서기·앉기·말하기·보기 등은 선언된 엔티티를 향할 때만 씁니다.
+- place: 프레임에 보이는 구체적인 장소로 정의하고 `indoor`, `outdoor`, `background`, `scene`, 단독 `room`을 금지했습니다. 엔티티 선정 문장에서도 place는 구체적인 장소가 보일 때만 넣도록 했습니다.
+- 인터페이스(game UI, HUD, 메뉴, 자막, 워터마크)는 조작이 내용인 경우가 아니면 엔티티로 선언하지 않습니다. 8B 출력에 `game ui`·`game interface` 엔티티가 약 11,000개 있었습니다.
+- demonstration을 “시청자가 따라 하도록 단계로 구성된 how-to”로 좁혔습니다.
+- 출력 첫 줄이 `[Context]`임을 명시했습니다.
+- 예시: 목공 예시의 format을 narrative로, 말다툼 예시의 place를 unknown으로 바꾸고(`living room` 엔티티 삭제) 서 있는 자세는 속성으로만 남겼습니다. 행동이 있는 예시 중 place를 채운 것이 3개에서 2개가 됩니다.
+
+**파서 변경(`graph-text/v19`, 이름 형식만).**
+
+- `[Context]` 헤더 없이 `medium:`으로 시작하는 출력을 복구합니다. `[Entities]`까지 함께 빠진 경우에는 `medium`·`format`·`topics` 줄이 끝나는 곳을 엔티티의 시작으로 봅니다.
+- `[Actions]`에 `none`과 실제 행동이 섞여 있으면 `none` 줄만 버립니다.
+- 두 복구 모두 ID 형식(v8) 출력에는 적용하지 않아 기존 v8 Run의 결과는 달라지지 않습니다. 복구된 장면의 parse_mode는 repaired입니다.
+
+**검증 범위.** R10의 경고 장면을 새 파서로 다시 해석하면 8B는 1,563건 중 1,124건, Gemini는 830건 중 23건이 구조화되고 2B는 371건 모두 그대로입니다. 저장된 파일은 바꾸지 않았고, embed-representations가 저장된 원문을 다시 해석할 때 반영됩니다. 수정한 v9_8b로는 아직 생성하지 않았으므로 위 프롬프트 변경이 각 지표를 실제로 움직이는지, 행동 없는 장면이 얼마나 늘어나는지, 추천 성능에 영향이 있는지는 확인되지 않았습니다.
+
+### 2026-11-11: 토큰 상한에서 잘린 출력 복구와 recovered 집계
+
+프롬프트 파일 내용은 변경하지 않습니다. v9_2b(Qwen3-VL 2B) 생성분 9,979장면에서 failed 944건(9.5%)이 모두 `output truncated at token limit`이었고, 같은 행동·엔티티를 반복하거나 `man1`, `man2`…로 번호를 세다 384토큰에서 잘린 경우였습니다. v8의 2B 출력에서는 같은 오류가 1.09%였습니다. 사용자 결정에 따라 잘린 출력의 앞부분을 살리고, 이를 success와 구분해 recovered로 집계합니다.
+
+**복구 규칙(`graph-text/v18`, 이름 형식만).**
+
+- 잘린 마지막 줄은 버리되, 그 줄에서 마지막 세미콜론 앞까지는 완성된 조각으로 봅니다.
+- 같은 엔티티 줄·같은 속성·같은 행동은 하나로 합칩니다. 내용을 새로 만들지 않습니다.
+- 남는 것은 엔티티 8개·엔티티당 속성 3개·행동 6개까지입니다. 현행 프롬프트 중 가장 큰 상한(v9_8b)이며, v9_2b의 상한(6·2·4)보다 큽니다.
+- 한 줄에 이어 쓴 행동은 앞 항목의 복구 규칙으로 나누고, 나눌 수 없는 줄은 버립니다.
+- [Entities] 이전에서 잘렸거나 엔티티가 하나도 남지 않으면 기존처럼 failed입니다. ID 형식(v8) 출력은 복구하지 않아 기존 v8 Run의 결과는 달라지지 않습니다.
+
+**저장과 집계.**
+
+- 복구한 장면은 구조화된 `scene_graph`와 함께 `warning: ["TRUNCATION_RECOVERED"]`로 저장합니다. 이 태그는 장면을 제외하는 경고가 아니라 표시입니다. 재실행 시 다시 생성하지 않고, embed-representations에서 제외하지 않습니다.
+- 진행 표시와 `generation_stats.json`에 `recovered`를 추가했습니다. 한 장면은 success·warning·recovered·failed 중 정확히 하나로 집계되어 합이 전체 장면 수와 같습니다.
+- 재시도 패스가 여러 번인 설정에서는 마지막 패스에서만 복구합니다. 이전 패스의 절단은 기존처럼 다음 패스에서 다시 생성합니다.
+- 이미 저장된 절단 실패 행은 같은 Run을 다시 실행할 때 재생성 없이 그 자리에서 복구합니다(`--force`가 아닐 때).
+
+**검증 범위.** 위 9,979장면에 적용하면 success 8,916, warning 119, recovered 930, failed 14입니다. 복구된 930건 중 176건은 행동이 남지 않았습니다. 회귀 테스트로 반복·번호 세기·이어 쓴 행동의 복구, ID 형식과 조기 절단의 실패 유지, 네 범주의 배타적 집계, 복구 장면의 재사용과 저장된 실패의 제자리 복구를 추가했습니다. 전체 테스트는 저장소 사본에서 실행해 71개 통과했습니다(작업 트리의 `rec_experiments_config.yaml`이 현재 로드되지 않아 사본에는 커밋 `3ca2f40`의 설정을 사용). 복구된 장면이 추천에 유용한지, 반복 직전까지의 내용이 정확한지는 확인하지 않았습니다.
+
+### 2026-11-11: v9_2b에 한 줄 한 행동 규칙 추가, 이어 쓴 행동 복구
+
+[scene_graph_v9_2b](../prompts/scene_graph_v9_core.md)를 같은 파일에서 수정했습니다. 사용자가 붙여 준 v9_2b(Qwen3-VL 2B) 출력 24장면에서 성공 10, `PARSE_FAILED` 10, 토큰 상한 절단 4였고, 실패 10건을 파서로 재현한 결과 모두 행동 여러 개를 한 줄에 세미콜론으로 이어 쓰고 tool·place 슬롯을 생략한 경우였습니다. Run 전체 출력은 이 작업 환경에 없어 집계하지 못했습니다. 수정 전 내용으로 생성한 출력(`R10_v9_2b_261111`의 기존 생성분)은 커밋 `d293563`의 파일 기준입니다.
+
+**프롬프트 변경(v9_2b).**
+
+- Output Format에 Entities·Actions 모두 "one per line"을 명시하고, 모든 줄에 다섯 슬롯을 쓰며 한 줄에 두 행동을 쓰거나 세미콜론으로 행동을 잇지 않도록 했습니다. v9_8b에는 처음부터 "one per line"이 있었습니다.
+- 목공 예시를 행동 2개를 두 줄로 쓰는 형태로 바꿨습니다(`man2 - carrying - wooden board; none; unknown` 추가). 이전에는 세 예시 모두 행동이 1개 이하였습니다.
+- tool 정의에 "도구가 없으면 none, actor는 tool이 될 수 없다"를 추가했습니다. 같은 표본의 성공 장면에서 tool에 actor 자신을 넣은 사례가 반복됐기 때문입니다.
+
+**파서 변경(`graph-text/v17`).** 이름 형식 출력에서만, 엄격 파싱이 실패했을 때 Actions를 다음과 같이 복구합니다.
+
+- 행동 구분자(` - `)가 들어간 조각을 새 행동의 시작으로 보고, 뒤따르는 조각을 순서대로 tool·place로 읽습니다.
+- 빠진 슬롯은 tool `none`, place `unknown`으로 채웁니다. 이 값은 프롬프트의 기본값이며 관찰 사실이 아닙니다.
+- `actor - action`처럼 구분자가 하나뿐인 조각은 행동을 유지하고 target을 `unknown`으로 둡니다. 이때 대상이 동사 구 안에 남을 수 있습니다(`looking at window`).
+- 한 행동 뒤에 조각이 3개 이상 붙거나, 행동 없이 조각이 먼저 나오거나, 구분자가 3개 이상이면 기존처럼 `PARSE_FAILED`입니다.
+- 복구된 장면의 `parse_mode`는 `repaired`입니다. ID 형식(v8) 출력에는 적용하지 않아 기존 v8 Run의 파싱 결과는 달라지지 않습니다.
+- 저장된 `PARSE_FAILED` 원문은 embed-representations에서 다시 파싱되므로, 이미 생성한 이름 형식 출력도 재생성 없이 회수됩니다. 특징 변환 계약(`scene-bge-inputs/v2`)은 올리지 않았으므로, 이름 형식 Run에서 이전 파서로 만든 특징 캐시가 있으면 `--force`로 다시 준비해야 합니다.
+
+**검증 범위.** 붙여 받은 실패 사례 중 7건을 다시 넣어 6건이 복구되고, 조각이 모호한 1건(`woman - carrying - backpack; backpack; house; door`)은 실패로 남는 것을 확인했습니다. 회귀 테스트로 이어 쓴 행동·누락 슬롯·모호한 입력·ID 형식 유지를 추가했고, v9_2b 예시 3개가 `native`로 파싱되는 것을 확인했습니다. 수정한 프롬프트로 실제 모델을 다시 돌리지 않았으므로 실패율이 줄어드는지는 미검증입니다. 토큰 상한 절단(같은 행동의 반복)은 이번 변경으로 해결되지 않습니다.
+
+### 2026-11-11: 이름 형식의 미선언 참조를 엔티티로 유지
+
+프롬프트 파일 내용은 변경하지 않습니다. 사용자 결정에 따라, 이름 형식(v9_2b·v9_8b) 출력에서 [Entities]에 선언하지 않은 이름을 역할에 쓴 경우 `unknown`으로 바꾸던 처리를 없앴습니다.
+
+- 미선언 이름은 속성 없는 엔티티로 [Entities] 끝에 추가하고 행동과 연결합니다. 같은 미선언 이름이 여러 번 나오면 하나의 엔티티로 연결합니다. 이름 대조는 기존과 같이 정확히 일치할 때만 같은 개체로 봅니다.
+- 대소문자만 다른 `None`·`Unknown`은 엔티티로 만들지 않고 `none`·`unknown`으로 읽습니다.
+- 엔티티를 추가한 장면의 `parse_mode`는 `repaired`입니다. 추가 건수를 따로 집계하는 경고·통계는 넣지 않았습니다.
+- ID 형식(v8) 출력의 처리는 바꾸지 않았습니다. 미선언 ID는 붙일 이름이 없으므로 계속 `unknown`이 되고, 공백이 들어간 구를 역할에 쓴 장면은 계속 `PARSE_FAILED`입니다. 따라서 기존 v8 Run을 다시 읽어도 결과가 달라지지 않습니다.
+- 파서는 `graph-text/v16`으로 갱신했습니다. 저장된 Run 중 이 변경으로 파싱 결과가 달라지는 입력이 없다고 판단해 특징 변환 계약(`scene-bge-inputs/v2`)과 장면 스키마(`scene-graph/v8`)는 유지했습니다. 과거 이름 형식 Run(구 v9)의 저장분은 이미 `unknown`으로 정규화된 구조화 데이터이므로 소급 적용되지 않습니다.
+
+**검증 범위.** 미선언 target·place가 엔티티로 추가·연결되는 경우와 ID 형식의 기존 동작 유지를 회귀 테스트로 추가했습니다. 삭제된 `prompts/scene_graph_v9.md`를 임시로 복원한 상태에서 전체 테스트를 실행해 69개 통과, 1개 실패를 확인했고 파일은 다시 제거했습니다. 실패한 `test_custom_labels_and_sources_complete_the_pipeline[rows1-title-only]`는 파서 변경 전 코드에서도 같은 오류(`ambiguous diagnosis results`)로 실패합니다. 실제 모델 생성과 추천 성능 평가는 수행하지 않았습니다.
+
+**미검증 사항.** `knife`로 선언하고 `kitchen knife`로 참조하면 같은 대상이 두 엔티티로 나뉘고, `man1`·`man2`를 선언한 뒤 `man`으로 참조하면 세 번째 엔티티가 생깁니다. `on ground` 같은 전치사구도 엔티티가 됩니다. 이런 경우의 빈도는 v9 출력이 없어 확인하지 못했습니다.
+
+### v8 → v9_2b·v9_8b: 이름 직접 참조 전환과 모델 크기별 분리
+
+2026-11-11 프롬프트 반영. 사용자가 기존 `scene_graph_v9.md`를 의도적으로 삭제했고, v8을 기준으로 두 파일을 새로 작성했습니다. [scene_graph_v9_2b](../prompts/scene_graph_v9_core.md)는 Qwen3-VL 2B용, [scene_graph_v9_8b](../prompts/scene_graph_v9_extended.md)는 8B용입니다. 2026-10-14자 기존 v9 이력은 아래에 그대로 보존하며, 이 항목의 v9_2b·v9_8b는 그 파일의 수정본이 아니라 v8에서 다시 출발한 버전입니다.
+
+**변경 근거.** 같은 v8 프롬프트로 생성한 `R05_v8_261105`(2B)와 `R05_v8_8b_261106`(8B)의 MicroLens-100K 115,947장면을 문자열 기준으로 집계했습니다([스크립트](../artifacts/runs/R05_v8_8b_261106/reports/compare_2b_8b_scene_graph.py), [통계](../artifacts/runs/R05_v8_8b_261106/reports/compare_2b_8b_scene_graph.json)). 키프레임과 대조하지 않았으므로 의미 정확도는 확인하지 않은 수치입니다.
+
+- ID 형식·유일성은 두 모델 모두 99.9% 이상 지켰지만 접두사의 의미는 일관되지 않았습니다. 2B는 예시의 `p`·`f`·`t`·`l`을 슬롯처럼 채워 `f` 엔티티 1위가 `enemy`(10.2%)였고, 8B는 이름 첫 글자와 예시 관례를 섞어 썼습니다.
+- 8B 파싱 실패(1.10%)의 약 93%는 선언하지 않은 구를 역할 슬롯에 쓴 경우였습니다. 2B는 `looking at p1`처럼 대상을 동사 안에 넣는 실패가 많았습니다.
+- 8B에서만 두드러진 현상: 쉼표로 묶인 topic 25.67%·attribute 10.54%, format `demonstration` 22.75%(2B 5.86%)와 medium 값 `gameplay`의 format 유입 1.91%, target `unknown` 7.76%, place와 target 동일 4.75%(3분의 1 표본), tool과 target 동일 1.62%.
+- 두 모델 공통: `speaking`이 최다 동사(2B 16.64%, 8B 8.98%)이고 정적·저정보 동사 행동이 2B 48.55%, 8B 35.78%였습니다.
+
+**공통 변경(v9_2b·v9_8b).**
+
+- Entities를 `id: kind; attribute`에서 `name; attribute`로 변경합니다. 이름은 1~3단어이며 `none`·`unknown`은 쓸 수 없습니다.
+- 이름은 유일해야 하며, 서로 다른 개체의 이름이 겹칠 때만 모두에 1부터 번호를 붙입니다(`man1`, `man2`). 8B 장면의 45.41%에 같은 이름의 엔티티가 둘 이상 있어 이 규칙이 자주 적용됩니다.
+- Actions의 역할은 [Entities]의 이름을 공백·번호까지 그대로 복사합니다. 동의어·더 긴 구·속성 포함 참조를 금지하고, 역할에 쓸 개체를 먼저 선언하도록 명시합니다.
+- 장소 용어를 `location`에서 내부 필드명과 같은 `place`로 바꿉니다. 슬롯 순서 `actor - action - target; tool; place`는 v8과 같습니다.
+- 이름 안에 ` - `·세미콜론·콜론을 쓰지 않도록 합니다.
+- 직업·역할 추론 금지를 삭제하고 권장으로 바꿉니다(사용자 결정). `professions`를 추론 금지 목록과 "never invent details or professions"에서 제거하고, 복장·장비·배경·활동이 보여 줄 때 `chef`·`soldier`처럼 역할로 이름을 붙이도록 합니다. 정체성(identities) 추론 금지와 "세부를 지어내지 않는다"는 유지합니다. v8 출력에서 넓은 종류 엔티티가 2B 48.34%, 8B 29.54%였고, 8B는 금지 조항 아래에서도 `taxi driver`·`police officer`·`soldier`를 사용했습니다.
+- 두 번째 예시를 당근 전달에서 두 사람이 등장하는 목공 장면으로 교체해 번호 규칙을 보여 줍니다. 성게 손질 예시는 조리복을 입은 `chef`로 바꿔 역할 이름을 보여 주고, 메이크업 비교 예시는 이름 형식으로만 바꿨습니다.
+
+**v9_2b.** 위 공통 변경만 적용합니다. 선택 원칙, 개수 상한(엔티티 6·속성 2·행동 4·topics 3), 그 밖의 근거 제한, none/unknown 구분은 v8 문장을 유지합니다. 따라서 v8 대비 변화에는 이름 참조 전환과 역할 이름 권장이 함께 들어 있어, 두 요인의 효과는 분리되지 않습니다.
+
+**v9_8b.** 공통 변경에 더해 정확도 규칙과 표현 범위를 넓힙니다. 출력 섹션과 슬롯 구조는 v9_2b와 같습니다.
+
+| 항목 | v9_2b | v9_8b |
+|---|---|---|
+| 상한 | 엔티티 6, 속성 2, 행동 4, topics 3 | 엔티티 8, 속성 3, 행동 6, topics 4 |
+| medium·format | 값 목록 | 값별 한 줄 정의. format에 medium 값을 쓰지 않도록 명시하고 demonstration의 범위를 한정 |
+| topics | 주제·초점·스타일 라벨 | 일반 라벨(`character interaction`, `combat`) 대신 구체적 상황을 쓰도록 예를 제시 |
+| 직업·역할 | 역할 이름 권장(한 문장) | 역할 이름 권장과 이유 설명. `man`·`woman`은 역할이 보이지 않을 때만 사용하고, 역할은 속성이 아닌 이름에 기록 |
+| 화면 텍스트 | 전사·인용 금지 | 이름·속성에 화면 문자열·인용·사용자명·점수·숫자를 넣지 않도록 추가 |
+| 엔티티 | 주요 대상·도구·장소 | 중간 산출물 포함. 행동으로 바뀐 상태를 속성에 기록(`sliced`, `assembled`) |
+| 행동 선택 | 구별되는 행동 | 발생 순서로 기록. 과업 단계·물리적 상호작용과 구체적 동사를 우선. 참여자 간 관계는 보이는 양상의 동사로 기록(`woman - confronting - man`)하고, 한 개체만 묘사하거나 단순히 들고 있는 행동(`standing`, 대상 없는 `speaking`)은 채우기용으로 쓰지 않음. 인터뷰·공연처럼 그것이 내용 자체인 경우는 예외 |
+| 역할 | v8 정의 | 대상 없는 행동의 target은 `none`, actor를 target에 반복하지 않음, 한 개체는 한 행동에서 한 역할만 |
+| unknown | v8 정의 | `none`이나 선언 가능한 개체를 대신하지 않는다고 명시 |
+| 구분자 | 세미콜론 | topic·attribute를 쉼표로 묶지 않도록 명시 |
+| 예시 | 3개(모두 live_action) | 5개. 다단계 손질, 번호가 붙는 두 사람, gameplay, 인물 간 관계와 물리적 행동을 함께 적는 서사 장면, 행동 없는 비교 |
+
+행동 선택 규칙은 처음에 "발화·자세·시선·단순 소지는 생략"으로 작성했다가 같은 날 사용자와 논의해 위와 같이 바꿨습니다. v8의 8B 출력에서 서사 장면이 52.81%였고 `speaking`의 약 58%는 target이 없었습니다. 전면 생략은 서사 장면의 인물 간 연결을 없애고, 규칙이 없으면 대상 없는 저정보 행이 남는다는 점을 절충한 설계입니다. `confronting`처럼 양상을 살린 동사가 표정·몸짓에서 대화 내용을 추측하게 만들 수 있다는 위험은 확인하지 않았습니다.
+
+**연동 및 검증 범위.**
+
+- 파서·스키마·추천 입력은 변경하지 않았습니다. 현행 `graph-text/v15`는 Entities 첫 필드의 콜론 유무로 ID 형식과 이름 형식을 장면마다 자동 판별합니다. 두 프롬프트의 예시 8개가 모두 `native`로 파싱되고 이름 참조가 내부 ID로 연결되는 것을 확인했습니다.
+- 이 항목 작성 시점에는 이름 형식의 미선언 이름이 경고 없이 `unknown`이 됐습니다. 이 처리는 같은 날 위 항목에서 변경했습니다. 번호가 붙은 이름(`man1`)은 `name` 필드에 그대로 저장됩니다. 대소문자·공백 무시 대조, 미선언 참조 집계, 번호 분리 저장, `--parse-option auto|symbol|word`는 논의만 했고 구현하지 않은 후속 과제입니다.
+- v9_8b는 상한이 커져 출력이 길어질 수 있습니다. 현재 `scene_max_new_tokens`는 384이며 v8 기준 8B 출력의 최댓값은 336토큰이었습니다. 상한 초과 여부는 실행 전이라 확인하지 않았습니다.
+- `tests/helpers.py` 등 일부 테스트가 삭제된 `prompts/scene_graph_v9.md`를 읽으므로 현재 테스트는 이 파일 부재로 실패합니다. 테스트 참조는 이번 작업에서 변경하지 않았습니다.
+- 실제 모델 생성과 추천 성능 평가는 수행하지 않았습니다. 이름 참조가 파싱 실패와 참조 손실을 줄이는지, v9_8b의 추가 규칙이 저정보 행동·쉼표 구분자·format 혼동을 줄이는지, 상한 확대가 추천에 유용한 정보를 늘리는지는 모두 미검증 가설입니다. 두 프롬프트를 서로 다른 모델에 쓰면 모델 크기와 프롬프트의 효과가 섞이므로, v9_8b의 효과는 같은 8B의 v8 출력(`R05_v8_8b_261106`)과 비교해야 합니다.
+
+### 2026-11-05: 추출 모델을 Qwen3-VL·Gemini로 한정
+
+추출 모델 설정·CLI·backend·생성 소스를 `qwen3vl`과 `gemini`로 정리했습니다. 추천 특징용 BGE와 현행 5개 추천 Arm, Scene 저장 형식 및 v8 location 읽기 호환은 유지합니다. 프롬프트 파일 내용은 변경하지 않으며, 기존 Run 산출물·생성 provenance와 프롬프트 버전 이력을 보존합니다. CPU/offline 테스트에서 두 모델의 추출·재사용·재시도와 Qwen 이미지 입력·생성 설정·길이 초과 처리를 확인했습니다. 실제 모델 생성과 추천 성능 평가는 수행하지 않았습니다.
+
+### 2026-11-05: v8 location JSON 읽기 호환 추가
+
+프롬프트 파일 `scene_graph_v8.md`·`scene_graph_v9.md`의 내용은 변경하지 않습니다. v8 실험에서 저장된 Action `location`을 읽기용 복사본에서 `place`로 정규화하도록 파서·저장 검증·추천 입력을 연결합니다. 이전 v9 전환 시의 location 거부 정책을 이 범위에서 변경하며, 아래 과거 변경 기록은 유지합니다.
+
+- 필드 값·개체 ID·참조와 원본 JSONL·생성 provenance를 보존합니다. 새 구조화 출력은 `place`로 저장합니다.
+- `location`과 `place`의 동시 선언은 같은 값이어도 거부합니다. receiver·Relations·장소 필드 누락과 그 밖의 구형 필드는 계속 거부합니다.
+- 파서는 `graph-text/v15`, 특징 변환은 `scene-bge-inputs/v2`로 갱신합니다. 이전에 제외한 장면을 누락한 캐시가 재사용되지 않도록 특징을 다시 준비하며, 내부 Scene 스키마·추천 모델 계약은 유지합니다.
+- CPU/offline 회귀 테스트에서 v8 텍스트·JSON 파싱, 장소 값·원본 보존, 필드 충돌 거부, 추출 재개와 임베딩·활동 구간 준비를 확인했습니다. 이전에 raw로 제외한 장면이 포함되도록 과거 변환 계약의 특징 캐시가 재생성되는지도 확인했습니다. 실제 모델 생성과 추천 성능 평가는 수행하지 않았습니다.
+
+### v8 → v9: 개체 이름 직접 참조와 place 용어 적용
+
+2026-10-14 프롬프트 반영. [scene_graph_v9](../prompts/scene_graph_v9.md)는 별도 ID와 개체 이름을 대응시키는 생성 부담을 줄이려는 설계입니다. 2B 모델의 정확도 개선은 아직 검증되지 않은 가설입니다.
+
+- Entities를 `id: kind; attribute; attribute`에서 `name; attribute; attribute`로 변경합니다. 같은 이름의 서로 다른 개체가 여러 개일 때만 `person1`, `person2`처럼 번호를 붙입니다.
+- Actions는 선언된 이름을 공백과 번호까지 정확히 재사용하며, 같은 개체의 이름과 번호를 유지합니다. 동의어 치환이나 속성을 포함한 참조는 허용하지 않습니다.
+- 행동 형식을 `actor - action - target; tool; place`로 변경합니다. place는 행동이 일어나는 장소이며 목적지가 아닙니다. 불명확한 장소는 `unknown`으로 표현합니다.
+- 두 사람이 등장하는 예시로 번호 구분과 이름 참조를 설명합니다. Context, 개수 상한, 근거 제한, none/unknown 구분, 전달 물체를 target으로 두는 원칙은 유지합니다.
+
+**연동 및 검증 범위:** 내부 필드도 `place`로 변경하는 사용자 결정에 맞춘 프롬프트입니다. 후속 코드 작업에서 내부 `location` → `place` 전환을 반영했습니다. 파서 `graph-text/v14`, 장면 스키마 `scene-graph/v8`, 직접 Graph 입력 `role-graph-inputs/v8`을 사용합니다. 기존 정책대로 `location` 구조화 데이터는 자동 변환 없이 거부하고 원본을 보존합니다. 이름 기반 v9 출력의 파싱·참조 처리를 구현했습니다. 공백·번호를 포함한 이름을 정확히 대조한 뒤 장면별 내부 ID를 부여하며 이름·속성을 보존합니다. 기존 ID 선언 형식과 현재 place JSON도 지원합니다. 미선언 이름은 기존 정책대로 warning 없이 unknown으로 처리하고, 중복 이름은 선언을 모두 보존하되 마지막 선언으로 연결합니다. v9 예시의 파싱·저장·요약 전달과 당시 로컬·클라우드 실행 경로 및 직접 Graph 입력을 가짜 backend로 검증했습니다. 실제 모델 생성·추천 성능은 검증하지 않았습니다. [summary_graph_v9](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v9.md)도 place와 장면별 이름·번호 해석에 맞춰 갱신합니다. 기존 v8 파일은 보존합니다.
+
+### v7 → v8: receiver 제거로 행동 역할 단순화
+
+2026-09-29 반영. v7 분석에서 Qwen은 출력 형식 준수는 개선됐지만, 전달 수령자를 뜻하는 receiver를 일반 상호작용 상대나 공격 대상에도 지정했습니다. 이를 시간 흐름 이해의 문제만으로 단정하지 않고, **추천에 필요한 정보에 비해 역할 구분 부담이 큰 필드를 제거**하는 방향으로 단순화합니다. location은 유지하여 receiver 제거의 영향을 별도로 살펴볼 수 있게 합니다.
+
+- Actions를 `actor - action - target; tool; receiver; location`에서 **`actor - action - target; tool; location`**으로 변경합니다. 5개 필드를 모두 출력하고, 필수 섹션은 기존의 `[Context]`, `[Entities]`, `[Actions]` 세 개를 유지합니다.
+- receiver의 정의·기본값·출력 슬롯과 수령자 엔티티를 포함하라는 지시를 제거합니다. 전달 행동의 target은 전달되는 물체로 유지하며, 수령자를 행동 문구나 추가 행동에 우회해서 넣지 않도록 명시합니다.
+- 성게 손질 예시는 receiver 슬롯을 제거하고, 당근 전달 예시는 수령자 엔티티 없이 전달 물체와 행동을 보존하도록 수정합니다. 행동 없는 메이크업 비교 예시는 유지합니다.
+- 주제 선택 원칙, actor·target·tool·location의 의미, none/unknown 구분, 엔티티·속성·행동 개수 상한은 유지합니다. 장면별 시간 이해 전체를 제거하거나 모든 전달 행동을 금지하는 변경은 아닙니다.
+
+**파이프라인 연동:** Qwen과 Gemini의 공통 파서·검증 경로에서 receiver의 타입·참조 검사를 비활성화하고, 새 구조화 출력에서는 해당 필드를 제외합니다. 다른 역할의 타입·참조 검사와 ID 중복 검사는 유지합니다. 기존의 완전한 v7 6개 필드 행과 JSON은 receiver를 무시하고 읽으며, 저장된 Run 파일은 변경하지 않습니다. 5개 필드 행의 마지막 값은 항상 location입니다. 따라서 location이 생략된 과거 v7의 불완전한 행과 새 v8 행을 자동으로 구분하지는 않습니다.
+
+기존 구조화 데이터의 receiver는 Summary 전달 및 직접 Graph 추천 입력에서도 제외합니다. 직접 Graph 모델의 receiver 텐서 슬롯은 형태 호환성을 위해 남기되 항상 `none` 상태로 두고 해당 간선을 생성하지 않습니다. 파서 버전은 `graph-text/v9`, 장면 스키마 버전은 `scene-graph/v6`, Context + Actions 추출 계약은 `graph/v5`, 직접 Graph 입력 버전은 `role-graph-inputs/v2`로 갱신했습니다. 기존 receiver 기반 특징 캐시를 재사용하지 않도록 입력 버전도 변경한 것입니다.
+
+**검증 범위:** 새 형식과 구형 입력, receiver 무시, 나머지 참조 오류, 저장·Summary 전달, 직접 Graph 입력을 회귀 테스트로 확인했습니다. 실제 데이터 생성·추천 성능 평가는 실행하지 않았습니다. receiver 제거가 의미 정확도나 추천 성능을 개선하는지는 후속 평가 대상입니다. 기존 v7 프롬프트는 보존하고 새 실험에는 v8 생성·요약 프롬프트를 함께 사용합니다.
+
+### v6 → v7: 행동 역할 확장과 none/unknown 구분
+
+v6까지의 actor·target·tool만으로는 전달 대상과 수령자를 분리하거나 행동 장소를 명시하기 어려웠습니다. v7은 선택 원칙을 유지하면서 지시를 압축하고 역할 정의를 구체화합니다.
+
+| 항목 | v5·v6 | v7의 변경 방향 |
+|---|---|---|
+| 행동 형식 | `actor - action - target; tool` | `actor - action - target; tool; receiver; location` |
+| target | 행동의 실제 대상 | 작용을 받거나 전달되는 대상이라는 의미를 명시 |
+| tool | 행동 도구 | 해당 행동에 실제로 사용하는 수단으로 한정. 칼도 씻을 때는 target |
+| receiver | 별도 역할 없음 | 전달 행동에서 target을 받는 수령자. 일반 상호작용 상대와 구분 |
+| location | 필요한 경우 엔티티 속성으로 표현 | 행동이 일어나는 장소. 이동 목적지와 구분 |
+| 빈 역할 | `none`으로 불명확하거나 불필요한 참조 표현 | `none`은 부재·비해당, `unknown`은 관련 값의 식별·표현 불가 |
+
+- receiver 기본값은 `none`, location 기본값은 `unknown`이며, 기본값 자체를 관찰 사실로 해석하지 않습니다.
+- actor 또는 target 중 하나는 선언된 엔티티여야 합니다. `unknown`만으로는 이 조건을 충족하지 않습니다.
+- 하나의 역할에는 하나의 ID만 사용합니다. 근거 있는 집단은 하나의 엔티티로 표현할 수 있지만, 그 외의 복수 참여자를 ID 목록이나 중복 행동으로 억지 표현하지 않습니다.
+- `person`, `food`, `vehicle` 같은 넓은 종류보다 시각적으로 확인되는 구체적인 종류를 우선합니다. 구체화가 어렵다면 알려진 상위 종류와 관련 속성을 남기고, 직업이나 정체성을 추측하지 않습니다.
+
+**남은 검증 방향:** 이전 대화의 v7 분석에서는 Qwen이 receiver를 말하기·바라보기·공격하기의 상대에도 채우는 문제가 확인됐습니다. 구조화 성공과 역할 의미의 정확성을 별도로 평가하고, 동일한 요약·생성 조건에서 receiver/location의 기여를 분리 검증해야 합니다. 필드 확장 자체를 추천 성능 개선으로 해석하지 않습니다.
+
+### v5 → v6: 활동 중심에서 구체적인 설명·비교 초점 중심으로 보완
+
+v5 기반 비교에서는 주요 사물과 행동이 남아도 대상 조건, 비교 기준, 설명 개념, 특수 기법, 전체 스타일이 약해졌습니다. 예를 들어 얼굴 조건에 따른 화장 비교가 일반적인 메이크업과 머리핀을 만지는 행동으로 축소됐습니다.
+
+- 우선순위를 **주요 주제·구체적인 초점 → 이를 뒷받침하는 활동·대상·도구 → 역할·상태**로 조정합니다. 배경 행인의 보행이나 사소한 손짓이 핵심 설명을 밀어내지 않도록 합니다.
+- `topics`를 일반 분야명에서 상호 보완적인 특성 라벨로 확장합니다. `low-contrast makeup`, `heavy versus light makeup`처럼 대상 조건과 비교 기준을 보존합니다.
+- 화면에 묘사된 활동과 콘텐츠의 전달 목적을 구분합니다. 게임 전투도 기전 설명이나 효과 비교일 수 있지만, Context가 비교라고 해서 가상의 `comparing` 행동을 만들지는 않습니다.
+- 설명용 화석·복원도처럼 행동이 없는 정보성 엔티티를 허용합니다. 패션·풍경·시각효과 편집에서는 전체 스타일·분위기도 topics의 주요 후보로 둡니다.
+- 신뢰할 수 있는 게임·모드·재료·장소의 구체적인 명칭과 관찰된 기법을 보존하되, 화면 텍스트의 주장을 실제 사건이나 결과로 바꾸지 않습니다. 시각 입력으로 음성·음악의 내용을 추측하지 않습니다.
+
+**출력 스키마와 개수 상한은 v5와 같습니다.** 필드를 늘리기보다 기존 슬롯에 어떤 정보를 선택할지를 먼저 개선한 버전입니다. 이전 대화의 `v6_refined`와 `v6_rewritten`도 서로 다른 스키마가 아니라 같은 설계를 다른 지시 순서·강조점·예시로 전달한 후보였습니다.
+
+### v4 → v5: 일반 관계 나열에서 Context + Actions로 전환
+
+v4는 `[Entities]`와 `[Relations]`를 사용하고, 관계를 `subject_id -> relation -> object_id`로 표현했습니다. v5는 이 구조를 추천용 맥락과 명시적인 행동 역할로 개편합니다.
+
+이전 대화에서는 외형과 `holding`·`standing beside` 중심의 Graph가 영상의 주제와 실제 작업 대상을 놓치는 문제가 확인됐습니다. 성게를 자르는 행동을 다른 사람에게 연결하거나, 한 인물의 여러 쇼트를 여러 인물의 상호작용으로 바꾸는 사례가 개편의 출발점이었습니다.
+
+- `[Context]`, `[Entities]`, `[Actions]`를 분리합니다. `medium`, `format`, `topics`로 매체·전달 형식·주제를 표현하여, 콘텐츠 맥락을 억지로 노드와 관계에 넣지 않도록 합니다.
+- 주요 활동 → 실제 대상 → 도구 → 역할·상태 → 구분에 필요한 외형 순으로 선택합니다. 행동 대상인 물체를 독립 엔티티로 남기고, 그것을 들고 있는 사람으로 대체하지 않습니다.
+- 행동은 `actor - action - target; tool`로 표현합니다. 방향은 필드 순서로 정하고, 구분자는 공백을 포함한 ` - `로 통일합니다.
+- 동일 개체의 반복 관찰, 무관한 쇼트, 게임 UI와 실제 공간을 구분합니다. 보이지 않는 조작자나 연결을 위한 관계를 만들지 않으며, 고립 엔티티와 빈 Actions를 허용합니다.
+- 화면 텍스트는 넓은 주제·활동의 단서로만 활용하고, 원문·번역·대사·가사·상세 줄거리와 텍스트 저장용 엔티티는 제외합니다.
+- 엔티티 상한은 4개에서 6개로 늘리고, 엔티티당 속성 상한은 3개에서 2개로 줄입니다. topics는 최대 3개, 행동은 기존 관계와 같은 최대 4개로 제한합니다. v4의 필수 `[End]` 마커는 현재 v5에서 요구하지 않습니다.
+
+핵심은 **관계를 많이 만드는 것보다, 무엇을 하는 콘텐츠인지와 누가 무엇에 행동하는지를 정확하게 남기는 것**입니다.
+
+## scene_description
+
+대상(최신순): [dwys](../prompts/scene_description_dwys.md) → [v3(삭제됨)](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/scene_description_v3.md) → [v2(삭제됨)](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/scene_description_v2.md) → [v1(이름 변경: dwys)](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/scene_description_v1.md)
+
+**개선 흐름: 직접 보이는 사실의 포괄적 묘사 → 근거 있는 의미 해석 허용 → 추천에 필요한 특징의 선택적 서술.**
+
+### 2026-11-16: v1을 `scene_description_dwys`로 이름 변경, v2·v3 삭제
+
+사용자가 `scene_description_v1.md`를 `scene_description_dwys.md`로 이름만 바꾸고(내용 동일, git rename 100%), `scene_description_v2.md`와 `scene_description_v3.md`를 삭제했습니다. 커밋 `e3fde07`에 포함되었고, 이 항목은 그 뒤에 기록했습니다.
+
+**결과.** 현재 Description 프롬프트는 dwys 하나입니다. 내용은 v1과 같아서, v2의 근거 있는 의미 해석 허용과 v3의 추천용 특성 선택 규칙이 없습니다. 장면을 빠짐없이 포괄적으로 묘사하고, 인물·장소 이름, 핵심 내용, 분위기, 대상 시청자, 문화적 맥락을 80–180단어(최대 350단어) 한 문단으로 쓰게 합니다.
+
+**변경 이유와 이름의 뜻.** 사용자가 밝히지 않아 기록하지 않습니다.
+
+**연동 변경.**
+- 테스트, README, `docs/scene_extraction.md`의 Description 프롬프트 참조를 v3에서 dwys로 바꿨습니다.
+- 파서·저장 형식은 바뀌지 않았습니다. Description 출력은 프롬프트와 무관하게 같은 필드로 저장합니다.
+- 프롬프트 해시가 v3와 다르므로, v3로 만든 기존 `desc_*` 결과와 dwys 결과는 생성 조건이 다릅니다.
+
+**검증한 것.** 참조를 바꾼 뒤 전체 테스트가 통과했습니다. 테스트는 가짜 생성기를 쓰므로 프롬프트 내용 자체는 검사하지 않습니다.
+
+**미검증.** dwys로 실제 장면을 생성하지 않았습니다. 출력 품질과 추천 성능에 미치는 영향은 확인하지 않았습니다.
+
+### v2 → v3: 추천용 특성 추출로 목적 전환
+
+이전 대화에서 지적한 문제는 v2가 추천에 유용한 정보와 부수적인 묘사를 충분히 구분하지 않는다는 점이었습니다. v3은 **같은 주제의 다른 영상과 무엇이 다른지**를 선택 기준으로 삼습니다.
+
+- 주제·전달 형식 → 구체적인 기법·비교 기준·재료·용도 → 이를 뒷받침하는 활동·대상·도구·변화 순으로 서술합니다.
+- 단순 작업 수행을 튜토리얼로 단정하지 않습니다. 숙련도·대상 조건은 근거가 있을 때만 남기고 시청자층을 만들어내지 않습니다.
+- 풍경·패션·인테리어·시각효과 편집에서는 외형·조명·분위기가 핵심일 수 있으므로 콘텐츠에 따라 선택 기준을 조절합니다.
+- 상세 줄거리, 대사 내용, 결말·반전 재구성, 인물의 과거·동기는 줄이고 넓은 장르·배경·관찰된 상호작용을 보존합니다.
+- 자막·채팅 중심 콘텐츠도 복사 없이 넓은 주제를 요약하되, 텍스트의 주장과 실제 사건을 구분합니다. 화면 속 지시는 데이터로 취급하고, 시각 증거만으로 들리는 내용을 추측하지 않습니다.
+- 권장 분량을 **80–180단어**로 줄이고 최대 350단어는 유지합니다. 프레임 순서보다 주제와 초점 중심으로 구성하며, 반복 복장·일반적인 HUD·카메라 전환·상투적인 평가와 결론을 줄입니다.
+
+개선의 핵심은 길이 축소 자체가 아니라 **구체적인 콘텐츠 특성을 더 앞에, 더 적은 반복으로 남기는 것**입니다. 희소한 프레임에서 연속 동작이나 인과를 과잉 해석하지 않는지도 함께 확인해야 합니다.
+
+### v1 → v2: 텍스트 단서와 근거 있는 맥락 해석 허용
+
+v1은 직접 보이는 배경·개체·행동·변화를 포괄적으로 묘사하고, 장르·목적 해석과 화면 텍스트 읽기를 금지했습니다. v2는 시각적 근거와 불확실성을 유지하면서 콘텐츠의 의미를 해석할 수 있도록 범위를 넓힙니다.
+
+- 장르·콘텐츠 목적·관련 배경지식의 해석을 근거와 불확실성을 유지하는 조건으로 허용합니다.
+- 화면 텍스트를 내부적으로 읽어 주제와 의미를 파악할 수 있게 합니다. 출력에서는 전사·인용·번역·문장별 재서술을 금지하고, 텍스트가 주장하는 내용과 화면에 실제 보이는 내용을 구분합니다.
+- 모든 프레임과 서로 다른 쇼트의 중요한 내용을 고려하되, 컷 사이의 인물 동일성·장소·사건 연속성을 추측하지 않습니다.
+- 누가 무엇에 어떤 도구로 행동하는지 보존하고 반복을 합칩니다. 한 문단, 200–300단어 권장·350단어 최대이며, 근거가 적으면 짧게 끝냅니다.
+
+단순한 외형 묘사에서 의미 있는 장면 이해로 확장했지만, 여전히 자유롭고 포괄적인 설명이 중심입니다.
+
+## summary_graph
+
+### 2026-11-05: summarize 단계와 전용 프롬프트 제거
+
+extraction을 장면별 Graph·Description 추출로 정리하면서 영상 요약 단계와 전용 프롬프트를 제거했습니다. 현행 추천 Arm은 장면별 특징을 사용하므로 영상 Summary 생성 경로를 유지하지 않습니다.
+
+삭제 대상: `summary_graph_v3.md`–`summary_graph_v9.md`. 실행·저장·실패 로그·요약 프롬프트 생성 API와 `summary_max_new_tokens` 설정을 함께 제거했습니다. 기존 summarize 명령과 요약 설정은 더 이상 지원하지 않습니다. 기존 Run의 Scene·Summary·추천 산출물과 아래 변경 이력은 보존합니다. 삭제한 프롬프트는 파일명별 Git 이력에서 확인할 수 있습니다.
+
+장면 추출 프롬프트와 Scene·추천 계약은 변경하지 않습니다. CPU/offline 회귀 테스트에서 요약 명령·설정 거부, 장면 추출·재개·재시도와 기존 Summary 파일 보존을 확인했습니다. 실제 모델 생성·추천 성능에 대한 새 평가는 수행하지 않았습니다.
+
+삭제 전 버전(Git 이력, 최신순): [v9](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v9.md) → [v8](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v8.md) → [v7](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v7.md) → [v6](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v6.md) → [v5](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v5.md) → [v4](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v4.md) → [v3](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v3.md)
+
+**개선 흐름: 중복을 줄인 자연어 요약 → Context + Actions의 의미 보존 → 확장 역할과 누락값 의미 보존 → receiver 없는 입력 해석으로 동기화.**
+
+### v8 → v9: place 필드와 장면별 개체 이름·번호 해석 반영
+
+2026-10-14 프롬프트 반영. [summary_graph_v9](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_graph_v9.md)는 [scene_graph_v9](../prompts/scene_graph_v9.md) 및 내부 장소 필드를 `place`로 변경하는 결정에 맞춰 요약 지침을 갱신합니다.
+
+- 장소 역할 설명과 누락 기본값을 `location`에서 `place`로 변경합니다. 행동 장소와 목적지를 구분하고, `unknown`인 장소를 추측하지 않는 원칙은 유지합니다.
+- 장면별 동일성 제한을 ID뿐 아니라 개체 이름과 번호에도 적용합니다. 서로 다른 장면의 `person1`이 같은 사람이라는 의미는 아니며, 요약 본문에 식별용 번호를 노출하지 않도록 명시합니다.
+- actor·target·tool의 의미, 전달 수령자 추측 금지, none/unknown 해석, 근거 제한과 영문 자연어 200–300단어 권장·350단어 최대는 유지합니다. 입력 자리표시자 `{scenes}`도 유지합니다.
+
+**호환성과 검증 범위:** 내부 `place` 필드를 사용하는 입력을 전제로 한 새 프롬프트이며, 기존 v8은 보존합니다. 프롬프트 변경만으로 내부 스키마나 과거 Run 데이터가 변환되지는 않습니다. 후속 코드 작업에서 내부 스키마·파서·저장·Summary 입력·직접 Graph 역할을 `place`로 통일했습니다. 구형 `location` 구조화 데이터는 자동 변환하지 않고 거부합니다. 실제 Summary 생성·추천 성능 평가는 수행하지 않았습니다.
+
+### v7 → v8: receiver 제외와 수령자 추측 방지
+
+2026-09-29 반영. [scene_graph_v8](../prompts/scene_graph_v8.md)의 역할 축소에 맞춰 요약 지침을 변경합니다.
+
+- 주요 행동을 뒷받침하는 정보 목록에서 recipients를 제외하고, actor·target·tool·location 중심으로 설명합니다.
+- 전달 행동에서도 target은 전달되는 물체이며, 누가 받는지 추측하지 않도록 명시합니다. 구형 입력에 receiver 필드가 남아 있으면 무시합니다.
+- receiver 누락 기본값 설명을 제거합니다. 참여자가 생략됐다고 실제로 없다고 단정하지 않으며, location의 기본값 `"unknown"`을 구체적인 장소로 보충하지 않습니다.
+- 장면별 ID 격리, 행동 방향과 불확실성 보존, 원문 재현·상세 서사 복원 금지, 구형·raw 입력의 근거 제한을 유지합니다. 영문 자연어 출력 및 200–300단어 권장·350단어 최대도 유지합니다.
+
+목적은 **추출 단계에서 생략하기로 한 관계를 요약 단계가 다시 추측해 넣지 않도록 하는 것**입니다. 구조화 입력은 전달 전에 receiver를 제외하며, raw 입력에 남은 receiver는 프롬프트의 무시 지침을 적용합니다. 프롬프트와 연동 테스트는 반영했지만, 새 Summary 생성이나 추천 성능 개선은 아직 검증하지 않았습니다.
+
+### v6 → v7: receiver/location 및 none/unknown 해석 동기화
+
+- 전달 행동에서는 actor가 target을 receiver에게 전달한다는 의미를 보존합니다. location은 행동 장소이며 목적지가 아니고, tool은 실제 사용 수단입니다.
+- v7 관찰 데이터의 `null`은 `none`에 대응하는 부재·비해당, 문자열 `"unknown"`은 식별·표현 불가로 구분합니다.
+- receiver 누락 시 `null`, location 누락 시 `"unknown"`이라는 기본값을 관찰 사실로 바꾸지 않습니다. receiver 기본값만 보고 수령자가 없다고 단정하거나 알 수 없는 장소를 추측하지 않습니다.
+- 과거 데이터의 `null`은 불명확함과 불필요함을 함께 나타낼 수 있으므로, 구형 입력에서 부재를 단정하지 않습니다.
+- 예약값을 자연어에 노출하거나 `unknown`을 새 인물로 만들지 않습니다. 구형 입력 지원과 200–300단어 권장·350단어 최대는 유지합니다.
+
+**남은 개선 방향:** Scene에서 선택한 구체적인 비교 기준·기법·스타일이 요약에서 일반 주제로 희석되지 않는지 확인해야 합니다. 이전 비교에서 관찰된 정형적인 시청자 추천 문구도 별도 점검 대상이며, 이를 제거하는 전용 규칙이 v7에 모두 반영됐다고 보지는 않습니다.
+
+### v5 → v6: 추천 맥락과 Context + Actions 해석 반영
+
+v5는 주요 주체·행동·상호작용을 자연어로 통합하고, 중복 제거·장면별 ID 구분·행동 방향과 불확실성 보존을 요구했습니다. v6는 이 원칙을 유지하면서 추천 목적과 새 구조의 해석을 명시합니다.
+
+- 추천 목적을 명시하고 각 장면의 Context를 종합하여 영상의 주제·매체·전달 형식을 설명합니다. 한 장면의 topic을 영상 전체에 확대하지 않습니다.
+- actor가 target에 tool을 사용해 행동한다는 의미를 명시합니다. 비어 있는 역할을 보충하거나 별도 쇼트를 동석·협력 관계로 연결하지 않습니다.
+- UI 변화·게임 사건과 실제 사람의 상호작용을 구분합니다. 구형 entities/relations, 선택적 context 목록, raw 텍스트에도 같은 근거 제한을 적용합니다.
+- 수동태의 방향을 보존합니다. 이전 분석에서 확인된 `A killed by B`의 승패 반전처럼 요약 단계에서 의미가 뒤집히는 문제를 방지합니다.
+- 대사·가사·상세 사건 전개·개인 이력을 재구성하지 않고, topics를 관찰되지 않은 사건의 증거로 사용하지 않습니다.
+
+출력 길이는 v5와 같은 200–300단어 권장·350단어 최대입니다. **Scene의 구조를 문장으로 바꾸면서도 맥락·역할·방향을 잃지 않도록 하는 변경**입니다. `scene_graph_v5`의 Context + Actions 도입을 `summary_graph_v6`이 지원하므로 두 파일의 버전 번호는 일치하지 않습니다.
+
+## summary_description
+
+### 2026-11-05: summarize 단계와 전용 프롬프트 제거
+
+extraction을 장면별 Graph·Description 추출로 정리하면서 영상 요약 단계와 전용 프롬프트를 제거했습니다. 현행 추천 Arm은 장면별 특징을 사용하므로 영상 Summary 생성 경로를 유지하지 않습니다.
+
+삭제 대상: `summary_description_v3.md`–`summary_description_v5.md`. 실행·저장·실패 로그·요약 프롬프트 생성 API와 `summary_max_new_tokens` 설정을 함께 제거했습니다. 기존 summarize 명령과 요약 설정은 더 이상 지원하지 않습니다. 기존 Run의 Scene·Summary·추천 산출물과 아래 변경 이력은 보존합니다. 삭제한 프롬프트는 파일명별 Git 이력에서 확인할 수 있습니다.
+
+장면 추출 프롬프트와 Scene·추천 계약은 변경하지 않습니다. CPU/offline 회귀 테스트에서 요약 명령·설정 거부, 장면 추출·재개·재시도와 기존 Summary 파일 보존을 확인했습니다. 실제 모델 생성·추천 성능에 대한 새 평가는 수행하지 않았습니다.
+
+삭제 전 버전(Git 이력, 최신순): [v5](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_description_v5.md) → [v4](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_description_v4.md) → [v3](https://github.com/obeychoi0120/ViewingContextPipeline/commits/HEAD/prompts/summary_description_v3.md)
+
+**개선 흐름: 일곱 필드의 정형 압축 → 짧은 자연어 요약 → 핵심 정보 보존을 위한 분량 여유 확대.**
+
+### v4 → v5: 내용 선택 규칙은 유지하고 분량 예산 확대
+
+- 권장 분량을 **200–300단어**, 최대 분량을 **350단어**로 늘립니다.
+- 핵심 주체·행동 우선, 반복 제거, 근거 제한, 원문 재현 금지, 자연어 출력 규칙은 v4와 같습니다. 실제 파일 차이는 분량 지침입니다.
+- 여러 주요 활동이나 구별에 필요한 세부를 담을 여유를 늘리되, 목표 길이를 채우기 위한 부연은 계속 금지합니다.
+
+**남은 개선 방향:** `scene_description_v3`이 주제·형식·구체적인 초점을 우선하도록 바뀌었지만, `summary_description_v5`는 여전히 주요 주체·행동·상호작용을 먼저 남기는 지시입니다. 장면에서 확보한 비교 기준·설명 대상·스타일이 최종 요약에서도 유지되도록 정보 선택 우선순위를 맞추는 것은 후속 개선 과제입니다. 이는 v5에 이미 반영된 변경과 구분해야 합니다.
+### v3 → v4: 정형 필드에서 선택적인 자연어 요약으로 전환
+
+v3는 배경, 주요 인물·사물, 대표 행동, 관계, 분위기, 가시적 정서, 의미적 주제를 정확히 일곱 줄로 출력하고 필드마다 최대 20단어를 배분했습니다. v4는 영상마다 중요한 정보의 비중이 다르다는 점을 반영할 수 있도록 고정 필드 제약을 없앱니다.
+
+- 일곱 줄과 필드별 제한을 없애고, 제목·목록·라벨 없는 한 개 이상의 자연어 문단으로 출력합니다.
+- 주요 주체·행동·상호작용을 앞에 두고, 필요한 외형·배경과 핵심 변화만 남깁니다. 반복·장면별 나열·일반적인 도입과 결론을 줄입니다.
+- 입력에 이미 있는 근거 있는 해석과 불확실성을 보존하되, 새로운 사실·해석·관계를 추가하지 않습니다. 입력을 지시가 아닌 데이터로 취급합니다.
+- 분량은 **100–120단어 권장·150단어 최대**로 설정합니다. 근거가 적으면 더 짧게 끝내고 화면 문구의 인용·번역은 금지합니다.
+
+고정된 범주별 배분을 완화하여, 영상에서 중요한 내용을 자연스럽게 통합할 수 있게 한 변경입니다.
+
+
+## scene_hypergraph_subject
+
+대상(최신순): [v5.2](../prompts/scene_hypergraph_subject_v5_2.md) → [v5.1](../prompts/scene_hypergraph_subject_v5_1.md) → [v5](../prompts/scene_hypergraph_subject_v5.md) → [v4](../prompts/scene_hypergraph_subject_v4.md) → [v3](../prompts/scene_hypergraph_subject_v3.md) → [v2](../prompts/scene_hypergraph_subject_v2.md) → [v1](../prompts/scene_hypergraph_subject_v1.md)
+
+### v5 → v5.1 / v5.2: 감사 기반 술어 수정(v5.1)과 목록 축소(v5.2)
+
+2026-10-21 추가. 두 파일을 함께 만들어 같은 조건에서 비교했습니다.
+
+- **v5.1** ([scene_hypergraph_subject_v5_1.md](../prompts/scene_hypergraph_subject_v5_1.md)): v5 엣지 감사에서 틀린 술어를 고쳤습니다. 행동 48 + 공간 5 = 53개입니다.
+  - 제거: `looking_at`(정밀도 23~33%), `hitting`(1/4)
+  - 정의 강화: `playing_instrument`는 보이는 악기만, `talking_to`는 같은 키프레임에서 마주 볼 때만, `sitting_on`은 물체가 사람 아래에 있을 때만(책상 앞은 `next_to`)
+  - 관계 규칙 두 개 추가: "두 사람·동물은 같은 키프레임에 함께 보이고 실제로 상호작용할 때만 연결", "자막·UI·신체 부위는 대상으로 쓰지 않음"
+- **v5.2** ([scene_hypergraph_subject_v5_2.md](../prompts/scene_hypergraph_subject_v5_2.md)): 사용자 가설("종류가 많아 틀린다")을 시험하려고, v5.1과 규칙은 같게 두고 행동을 20개로 묶었습니다. 예: `cooking`, `moving`, `fighting`, `helping`. 공간 5개는 같고 총 25개입니다. v5.1과는 목록 3줄과 방향 예시 1줄만 다릅니다.
+- **schema**: 둘 다 v5 schema에서 predicate enum만 각 목록으로 바꿨습니다.
+
+**파이프라인 연동:** 파이프라인에는 연결하지 않았습니다. 파일럿 실행기 ARMS에 `hyper_subject_v5_1_qwen_vllm`과 `hyper_subject_v5_2_qwen_vllm`을 추가했고, parser는 v4와 같습니다.
+
+**검증 범위:** 같은 171장면에서 각 1회 추출했습니다(171/171 첫 시도 성공). 버전을 숨긴 2차 엣지 감사(무작위 50개씩 + 1차 항목 20개 재감사, 일치 19/20)를 했습니다([보고서](../artifacts/runs/261020_hypergraph_subject_pilot/reports/predicate_vocab_round2_report.md)).
+
+- **전체 정밀도(확인)**: v4 55.1%, v5 55.3%, v5.1 54.2%, v5.2 58.3%. 목록 크기와 무관하게 표본 오차(±14pp) 안입니다. 술어만 틀린 오답은 v5.1·v5.2 모두 7건입니다.
+- **행동 엣지(확인)**: v4 52% → v5.1 65% → v5.2 74%. v5.1과 v5.2의 차이는 유의하지 않습니다.
+- **공간 엣지(확인)**: v5.1 41%, v5.2 44%. `on`은 1/8, 2/7입니다.
+- **사후 필터**: 행동 엣지와 environment로 가는 `in`만 남기면 69~73%입니다. 감사 표본으로 계산한 값입니다.
+- **자동 지표**
+  - 행동 엔트로피: v5.1 4.32, v5.2 3.59 bit
+  - `holding`: 18.9%, 20.3%
+  - self-loop: 23, 14 (v5 37)
+  - attr 자리표시: 54, 55 (v5 79)
+- **남은 문제**: v5.1도 MOBA에서 `playing_instrument`를 5건 지어냈습니다. 다른 컷의 인물을 연결하는 오류도 규칙을 넣고 남았습니다.
+- **미검증 가설·후속 과제**: v5.2에서 `cooking`을 세부 동작으로 다시 나눈 목록, 공간 엣지 사후 필터의 추천 성능 영향은 실행하지 않았습니다.
+
+### v4 → v5: 술어 어휘 55개를 프롬프트 본문에 명시하고 schema enum과 동기화
+
+2026-10-21 추가. v4의 행동 술어가 `holding`(33%)과 일반 동사에 몰려 있었습니다. 그래서 행동 50개 + 공간 5개의 선별 어휘([predicate_vocabulary_draft.md](../artifacts/runs/261020_hypergraph_subject_pilot/reports/predicate_vocabulary_draft.md))를 유형별로 엣지 규칙에 적었습니다. 근거는 다음과 같습니다.
+
+- v4에서는 enum에만 있고 본문에 없는 술어가 거의 쓰이지 않았습니다. 본문 예시 10개가 엣지의 93.5%를 차지했습니다. 모델에게 schema enum은 보이지 않고 본문 목록만 보인다는 뜻입니다.
+- enum 없는 실행 세 건의 목록 밖 동사 186건 중 86.6%를 이 어휘가 덮습니다.
+
+v4와의 차이는 다음과 같습니다.
+
+- **노드 규칙(1번 섹션)**: v4와 글자까지 같습니다.
+- **엣지 규칙(2번 섹션)**: v4의 방향 예시 4개 대신 술어 목록을 유형별로 적었습니다(조작·신체·사회·공연/게임·공간). 다음 규칙을 함께 적었습니다.
+  - 주체가 source입니다.
+  - `giving`·`feeding`은 받는 쪽을 가리킵니다.
+  - `looking_at`·`talking_to`는 사람·동물에게만 씁니다.
+  - 행동이 보이지 않으면 공간 관계만 씁니다.
+  - 목록을 채우려고 행동을 지어내지 않습니다.
+- **schema** ([scene_graph_v5_schema.py](../artifacts/runs/261020_hypergraph_subject_pilot/reports/scene_graph_v5_schema.py)): predicate enum을 위 55개로 바꿨고, 나머지는 v4와 같습니다. 프롬프트 목록과 enum이 일치함을 코드로 확인했습니다.
+
+**파이프라인 연동:** 파이프라인에는 연결하지 않았습니다. 파일럿 실행기 ARMS에 v5를 추가했습니다(arm `hyper_subject_v5_qwen_vllm`, parser는 v4와 같은 `parse_valid_scene_graph`). `--no-structured-output`으로 enum 없는 실행(arm `hyper_subject_v5_noschema_qwen_vllm`)도 가능합니다.
+
+**검증 범위:** v4와 같은 171장면에서 한 번 추출했고, Claude 서브에이전트 4개가 버전을 모른 채 엣지 159개를 키프레임으로 감사했습니다([보고서](../artifacts/runs/261020_hypergraph_subject_pilot/reports/predicate_vocab_report.md)).
+
+- **확인된 개선**
+  - 행동 술어 종류 14 → 45, 엔트로피 2.67 → 4.02 bit
+  - `holding` 비중 33% → 15%
+  - 물체·사람을 가리키는 `in` 302 → 69 (environment 노드가 있는 장면 68 → 100)
+  - enum 없는 실행에서 목록 밖 0.1%
+- **변하지 않음**: 무작위 엣지 정밀도 v4 55.1% vs v5 55.3%(95% 구간 ±14pp). 노드 6개 채우기와 attr 자리표시도 그대로입니다.
+- **확인된 문제**
+  - `looking_at`이 8 → 140건으로 늘었고 정밀도는 23~33%입니다. 다른 컷의 인물을 연결하거나, 카메라를 보는 사람을 연결했습니다.
+  - `in_front_of`가 0 → 120건으로 늘었습니다.
+  - 술어별로 갈립니다: `playing_instrument` 0/5(MOBA에서 controller를 지어냄), `hitting` 1/4, `sitting_on` 3/8은 틀렸고, `shooting` 9/9, `applying` 5/6, `hugging` 3/3은 맞았습니다.
+- **미검증 가설·후속 과제**: v5.1(`looking_at`·`hitting` 제거, `playing_instrument`·`talking_to`·`sitting_on` 정의 강화)의 정밀도 개선은 아직 실행하지 않았습니다. 노드 단위 정답·tracker 지표와 추천 성능은 v5에서 다시 재지 않았습니다.
+
+### v3 → v4: 규칙 간소화, 단일 인물 장면 규칙 추가, JSON schema 제약 디코딩과 구조 parser 도입
+
+2026-10-21 추가. 사용자가 v3 결과를 보고 준 프롬프트, JSON schema, parser를 그대로 저장했습니다. v3에서 확인된 문제는 다음과 같습니다.
+
+- 첫 시도 잘림 16장면
+- 노드 수 위반 45장면. 1인 장면에서 노드 1개만 냈습니다.
+- self-loop 33개
+- 목록 밖 술어 51개
+- 펜스 171/171
+- 예시 단어 `wok`의 누출
+
+v3와의 주요 차이는 다음과 같습니다.
+
+- **프롬프트**
+  - 시스템 프롬프트에서 "without markdown"과 "factual"을 뺐습니다.
+  - "SINGLE-PERSON SCENES"를 추가했습니다. 대상이 1명·1마리뿐이어도 물체(손에 든 도구·휴대폰·안경·옷가지)나 배경(방·무대·거리·마당)을 하나 이상 넣어 노드를 2개 이상 만들게 합니다.
+  - label 예시를 일반 명사(man·woman·child·dog·car·phone·sword·bowl·room·stage)로 바꿔 wok·soybeans·puppy를 뺐습니다.
+  - 엣지를 1~8개로 제한했습니다.
+  - 타입 쌍별 술어 목록을 방향 원칙 네 가지로 줄였습니다: 행동 주체가 source, `in`은 환경, `next_to`는 물체, `contains`는 용기→내용물.
+  - 사람 간 술어 목록에서 `looking_at`을 뺐습니다.
+  - 여러 단계 행동 규칙과 JSON 스키마 예시 블록을 없앴습니다.
+- **디코딩**: 사용자 `SCENE_GRAPH_JSON_SCHEMA`를 vLLM structured outputs(xgrammar)로 강제합니다. 위치는 `artifacts/runs/261020_hypergraph_subject_pilot/reports/scene_graph_v4_schema.py`입니다. 강제 내용은 다음과 같습니다.
+  - nodes 2~6개, id n1~n6, type 4종
+  - label 1~30자, attr 1~80자
+  - edges 1~8개, 각 엣지는 [id, 술어 21종, id]
+  - 추가 키 금지
+- **parser**: 사용자 `parse_valid_scene_graph`(같은 폴더 `scene_graph_v4_parser.py`)입니다. 단어 치환이나 순서 변경 없이 다음을 제외합니다.
+  - 중복 노드 id
+  - 길이가 3이 아닌 엣지, 없는 id를 가리키는 엣지
+  - self-loop, 중복 엣지
+
+**파이프라인 연동:** 파이프라인에는 연결하지 않았습니다. 파일럿 실행기 ARMS에 v4를 추가했습니다. 행에 structured_output과 후처리를 넣었고, 디코딩 결과는 `raw_graph`, parser 결과는 `graph`로 저장합니다. `src/`의 `QwenGenerationTask.structured_output` 경로를 그대로 썼으며 `src/`는 수정하지 않았습니다. v1~v3 실행 경로는 그대로입니다. 실행 전에 xgrammar 0.2.8로 schema를 컴파일해 노드 수·id·술어·길이·펜스 위반이 거부되고 self-loop는 통과함을 확인했습니다.
+
+**검증 범위:** v1~v3와 같은 30편·171장면에서 한 번 추출했습니다([보고서](../artifacts/runs/261020_hypergraph_subject_pilot/reports/hypergraph_v4_report.md)).
+
+- **형식(확인)**
+  - 첫 시도 성공 171/171, 순수 JSON 171/171, 잘림 0
+  - parser가 self-loop 36개와 중복 엣지 46개를 제거했습니다.
+- **내용(확인된 변화)**
+  - 158/171장면이 노드를 6개로 채웠습니다.
+  - attr 자리표시(`color, material` 등)가 77개 생겼습니다.
+  - 엣지의 40%가 `in`이고, 그중 301개가 물체·사람을 가리킵니다.
+  - 제목 화면 사람 생성이 1/3 → 2/3으로 늘었습니다.
+  - person→person 중 talking_to·looking_at은 82% → 53%로 줄었습니다.
+  - `wok` 누출은 사라졌습니다.
+- **원인 분리(2026-10-21 추가 실행, 확인)**: 같은 v4 프롬프트와 parser를 schema 없이 같은 171장면에 돌렸습니다([보고서](../artifacts/runs/261020_hypergraph_subject_pilot/reports/hypergraph_v4_noschema_report.md)). 실행기 옵션은 `--no-structured-output`, arm은 `hyper_subject_v4_noschema_qwen_vllm`입니다.
+  - **v4 프롬프트에는 출력 예시가 없어서 schema가 필수입니다.** schema 없이는 노드 697/1,103에 id가 없고, 엣지가 label을 가리켰습니다. 그래서 parser 결과가 112장면에서 노드 0개가 됐고, 첫 시도 잘림 37·펜스 171도 다시 나왔습니다.
+  - **원출력 기준으로 프롬프트에서 오는 문제**: 노드 6개 이상 채우기(140/171, 6 초과 58), attr 자리표시(98), 제목 화면 사람 생성(2/3)은 schema 없이도 나왔습니다.
+  - **`in` → 물체·사람(v4 314/444)은 environment 노드가 없는 장면에서만 생겼습니다.** schema 실행에서 environment 노드가 있는 장면은 68/171로, schema 없이(101)보다 적었습니다. schema가 environment 노드를 줄이는 이유는 확인하지 않았습니다.
+- **미검증 가설·후속 과제**: 다음 프롬프트 수정의 효과는 실행하지 않았습니다. 추천 성능 평가도 하지 않았습니다.
+  - environment 노드 1개 필수화
+  - attr 괄호 문구 교체
+  - 노드 수 규칙 완화
+
+### v2 → v3: hyperedge 제거, 노드 병합과 엣지 타입·방향 규칙 추가
+
+2026-10-21 추가. 사용자가 v2 결과를 보고 만든 프롬프트를 문구 그대로 저장했습니다. v2 파일럿에서 확인된 문제에 대응하는 변경입니다.
+
+- 엣지 품질이 낮았습니다. person→person이 대부분 talking_to·looking_at이었고, `on_top_of`가 남용됐으며, self-loop가 있었습니다.
+- hyperedge가 엣지를 반복했습니다.
+- attr에 행동·자세가 섞였습니다.
+
+v2와의 주요 차이는 다음과 같습니다.
+
+- **hyperedge 제거**: 출력은 `nodes`와 `edges`만 남습니다.
+- **노드 병합**: 시스템 프롬프트에 "6장 키프레임 = 같은 30초 구간"을 명시했습니다. 여러 프레임에 나오는 같은 대상과 반복 UI 아이콘은 노드 하나로 합치게 했습니다.
+- **attr**: 정적 외형(옷·머리·색·재질)만 허용하고 행동·자세를 금지했습니다.
+- **엣지 규칙**: self-loop를 금지했습니다. 타입 쌍별 술어 목록을 두었습니다.
+  - 사람→사람: talking_to·fighting·helping·looking_at·chasing만 허용
+  - 사람·동물→물체: holding·using·stirring 등 13개
+  - 공간 관계: contains·next_to·in·on의 방향 규칙과 예시
+  - 사람을 작은 물체 위·안에 두는 것을 금지
+- **여러 단계 행동**: 시간 순서대로 엣지를 여러 개 출력하게 했습니다.
+
+**파이프라인 연동:** 파이프라인에는 연결하지 않았습니다. 파일럿 실행기 ARMS에 v3를 추가했습니다(arm `hyper_subject_v3_qwen_vllm`, 저장 필드 `graph`). 파서에 `parse_graph_v3`를 추가했고, v2와 같은 노드·엣지 검사를 하되 hyperedge를 요구하지 않습니다. 기존 v2 출력을 다시 파싱해 결과가 변하지 않는 것을 확인했습니다.
+
+**검증 범위:** v1·v2와 같은 30편·171장면에서 같은 조건(max_new_tokens 768)으로 한 번 추출했습니다([보고서](../artifacts/runs/261020_hypergraph_subject_pilot/reports/hypergraph_v3_report.md)).
+
+- **좋아진 점(확인)**
+  - attr의 행동·자세 단어: 34% → 5%
+  - `on_top_of`: 87 → 1
+  - 보이는 대상 수를 넘는 사람·동물: 37 → 21
+  - 보이는 대상이 1명인 장면에서 2개 이상: 11/57 → 8/57
+- **나빠진 점(확인)**
+  - 첫 시도 잘림: 0 → 16장면. 같은 물체 노드를 n15~n22까지 반복했고, 1건은 self-loop 반복입니다. penalty 1.1 재시도로 모두 회복했습니다.
+  - 노드 수 2~6 위반: 8 → 45장면. 1개짜리가 3 → 31로 늘었는데, 1인 장면에서 물체·배경을 생략한 경우입니다.
+  - self-loop: 8 → 33
+  - GT 대비 사람·동물 커버리지: 84.1% → 76.9%
+  - 예시 단어 `wok`의 출처 영상 밖 사용: 4 → 12. 키프레임상 웍이 없는 장면이 포함됩니다.
+- **그대로(확인)**: person→person 엣지 중 talking_to·looking_at 비율 82%, ```` ```json ```` 펜스 171/171
+- **규칙 위반(확인)**: 목록 밖 술어 51, 사람 전용 술어를 사람 아닌 대상에 씀 23, 사람을 물체 안·위에 둠 26, 방향 역전 11
+- **미검증 가설·후속 과제**: 구조화 출력(JSON schema 제약 디코딩)으로 노드 수·type·술어 목록·펜스를 강제하면 형식 문제가 사라진다는 가설, 예시 단어 교체의 효과는 아직 실행하지 않았습니다. 추천 성능 평가도 하지 않았습니다.
+
+### v1 → v2: 주체 목록에서 노드·엣지·hyperedge 그래프로 전환
+
+2026-10-20 추가. 사용자가 제시한 새 프롬프트를 문구 그대로 저장했습니다. v1 파일럿에서 다음 문제가 확인된 뒤의 변경입니다.
+
+- "최대 3개"가 "항상 3개"로 동작해 같은 대상이 행동별로 중복됐습니다.
+- 예시 문구가 화면과 무관하게 복사됐습니다.
+- 사람이 없는 화면에서 사람을 지어냈습니다.
+
+v2는 출력을 한 장면의 그래프로 바꿉니다.
+
+- **`nodes`**: 2~6개. `id`(n1…), `type`(person·animal·object·environment 중 하나), `label`(짧은 표준 명사), `attr`(외형·상태)를 갖습니다.
+- **`edges`**: `[source_id, predicate, target_id]` 방향 삼항입니다. 술어는 1~2단어 원자 관계입니다.
+- **`hyperedges`**: 1~2개. `event`(집단 상황 구절)와 참여 노드 id 목록을 갖습니다.
+
+v1과의 주요 차이는 다음과 같습니다.
+
+- 물체·배경이 주체 안의 문자열이 아니라 독립 노드가 되고, 관계는 노드 id로 연결합니다.
+- "distinct entities"와 "NEVER invent people"(사람이 없으면 물체·동물·배경만)을 명시합니다.
+- 주체별 `macro_action`이 없어지고, 행동은 엣지 술어와 hyperedge `event`로 표현합니다.
+- 출력이 JSON 리스트에서 JSON 객체로 바뀌고, 스키마가 여러 줄 예시로 주어집니다.
+
+**파이프라인 연동:** v1과 마찬가지로 파이프라인에는 연결하지 않았습니다. 파일럿 실행기 `run_subject_vllm.py`의 ARMS에 v2를 추가했고(arm `hyper_subject_v2_qwen_vllm`, 저장 필드 `graph`), v1 실행 경로는 그대로입니다. 파서 `hypergraph_parser.py`는 출력을 고치지 않고 JSON 객체 형태와 다음 스키마 위반을 기록합니다.
+
+- 노드 수·type, 알 수 없는 id, 자기 자신을 가리키는 엣지
+- hyperedge 수·크기
+
+**검증 범위:** v1과 같은 30편·171장면, 같은 조건(max_new_tokens만 768)으로 한 번 추출했습니다([보고서](../artifacts/runs/261020_hypergraph_subject_pilot/reports/hypergraph_v2_report.md)).
+
+- **형식(확인)**: 171/171에서 JSON 객체를 추출했습니다. 다만 모두 ```` ```json ```` 펜스로 감싸 "without markdown" 지시를 어겼습니다. 스키마 위반은 14장면이고 평균 283토큰입니다.
+- **노드(확인)**: GT의 보이는 대상 수를 넘는 사람·동물이 120 → 37로 줄었습니다. 보이는 대상이 1명인 장면에서 2개 이상을 낸 비율은 72% → 19%, 제목 화면에서 사람을 지어낸 장면은 3/3 → 1/3입니다. 다른 영상으로의 예시 문구 복사는 attr·event에서 0건입니다.
+- **엣지·hyperedge(확인된 문제)**: self-loop를 뺀 person→person 엣지 225개 중 82%가 talking_to·looking_at입니다(처음 기록한 79%는 분모를 self-loop 포함 233개로 잡은 값이라 2026-10-21 정정). 예시 술어 on_top_of가 87개(15%)이며 `man on_top_of man`처럼 잘못 쓰였습니다. hyperedge 181개 중 57%가 2노드이고, 그중 100/104는 기존 엣지와 같은 쌍입니다.
+- **주의**: 예시 일부(soybeans·striped shirt, towel on neck·otter·jail cell interrogation 등)가 파일럿 영상에서 따온 것이라, 해당 영상의 결과는 낙관적일 수 있습니다.
+- **미검증 가설·후속 과제**: 엣지·hyperedge를 후처리로 구성하는 편이 낫다는 판단, 그리고 on_top_of 제거·예시 교체·한 줄 스키마의 효과는 아직 실행하지 않았습니다. 추천 성능 평가도 하지 않았습니다.
+
+### v1: 주체 중심 Hypergraph 추출 파일럿 프롬프트 신규 추가
+
+2026-10-20 추가. 기존 평가 framework 위에 새 Hypergraph를 만들기 위한 첫 단계로, 사용자가 제시한 프롬프트를 문구 그대로 저장했습니다. 장면마다 주요 활동 주체(사람 또는 핵심 물체)를 최대 3개 뽑고, 주체마다 `entity_type`(일반 범주)·`appearance`(변하지 않는 외형)·`macro_action`(진행 중인 활동, 동사구)·`context_objects`(주변 물체·배경 2~5개)를 JSON 리스트로 출력하게 합니다. 주체 하나와 그 주변 물체 묶음을 hyperedge 후보로 삼으려는 설계입니다.
+
+- scene_graph v8(`[Context]`·`[Entities]`·`[Actions]` 텍스트 섹션)과 달리 Context(medium·format·topics), 엔티티 ID, 행동별 target·tool·location이 없습니다. 물체는 주체별 목록 안의 문자열이며 ID나 주체 간 공유 표시가 없습니다.
+- 파일은 `[System Prompt]`와 `[User Prompt]` 두 섹션으로 되어 있고, 시스템 프롬프트를 system 메시지로 보내는 것을 전제로 합니다.
+
+**파이프라인 연동:** 파이프라인 파서·저장·검증·Summary·GNN에는 연결하지 않았습니다. 현재 `QwenBackend`는 user 메시지 하나만 보내므로 파일럿 실행기 `artifacts/runs/261020_hypergraph_subject_pilot/reports/run_subject_vllm.py`가 백엔드를 상속해 system 메시지를 앞에 붙입니다(`src/`는 변경하지 않음). 파일럿 파서 `subject_parser.py`는 출력을 고치지 않고 JSON 리스트의 형태(strict/fenced/embedded)와 스키마 위반만 기록합니다.
+
+**검증 범위:** 1단계 장르 다양 30편·171장면에서 Qwen3-VL-2B(vLLM 0.28.0, greedy, penalty 1.05)로 한 번 추출했습니다([보고서](../artifacts/runs/261020_hypergraph_subject_pilot/reports/subject_pilot_report.md)).
+
+- **형식(확인)**: 첫 시도 순수 JSON 171/171, 스키마 위반 1건(context_objects 6개), 평균 168토큰.
+- **내용(확인된 문제)**:
+  - 152/171장면이 주체를 3개 냈고, 보이는 대상이 1명인 장면도 75%가 3개였습니다.
+  - GT의 보이는 대상 수를 넘는 주체가 120개였습니다. 같은 대상을 행동·컷별로 반복한 경우, 없는 인물, 예시 복사가 섞여 있습니다.
+  - 예시 문구 `man in black apron and glasses`가 화면과 무관하게 5번 나왔습니다.
+  - entity_type의 92%가 `person`이었습니다.
+  - 사람이 없는 제목 화면 3장면 모두에서 사람 주체를 지어냈습니다.
+- **미검증 가설·후속 과제**: "서로 다른 대상만 한 번씩, 적으면 적게"를 명시하고 예시 값을 중립 자리표시로 바꾸면 중복·예시 복사가 줄어든다는 가설은 아직 실행하지 않았습니다. 추천 성능 평가도 하지 않았습니다.

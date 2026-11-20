@@ -1,0 +1,73 @@
+# Copy to config.yaml and set the paths. Relative paths resolve from the repository root.
+artifacts_root: artifacts
+
+preparation:
+  # [Category] TXT list: section headers, then "Category_Manual_001 https://..." lines.
+  video_list: /path/to/video_list_merged.txt
+  # Downloaded videos (videos/<content_id>.mp4) and metadata (metadata/<content_id>.json).
+  data_root: /path/to/youtube_dataset
+  download:
+    height: 360            # preferred video height; larger sources are used when it is missing
+    cookies_file: null     # yt-dlp cookies file for bot checks; never committed
+    sleep_seconds: 10      # pause after each download
+    rate_limit_sleep_seconds: 600
+    max_rate_limit_retries: 3
+  split:
+    seed: 42
+    ratios: {train: 0.8, val: 0.1, test: 0.1}
+  keyframe_workers: 4
+
+models:
+  # Generation models name a backend: vllm (local checkpoint) or gemini (Vertex AI).
+  gemini:
+    backend: gemini
+    project_id: your-gcp-project
+    location: global
+    model_id: gemini-3.8-flash
+    temperature: 0.0
+    thinking_level: low
+    media_resolution: MEDIA_RESOLUTION_LOW
+  gemma4_e2b:
+    backend: vllm
+    path: /path/to/models/gemma-4-E2B-it
+    # Image token budget per keyframe; must match between extraction and LoRA training.
+    mm_processor_kwargs: {max_soft_tokens: 140}
+  d3:
+    path: /path/to/models/d3-mini
+  bge:
+    path: /path/to/models/bge-large-en-v1.5
+
+extraction:
+  visual_evidence:
+    image_resolution: [640, 360]
+    scene_duration: 30
+    num_keyframes: 6
+  vllm:
+    gpu_memory_utilization: 0.90
+    max_num_seqs: 32
+    max_num_batched_tokens: 16384
+    max_model_len: auto
+    renderer_num_workers: 4
+    enable_chunked_prefill: true
+    enable_prefix_caching: true
+    enforce_eager: false
+    async_scheduling: null
+  gemini:
+    threads: 32
+  graph:
+    gemini: {scene_max_new_tokens: 1024}
+    gemma4_e2b: {scene_max_new_tokens: 512}
+
+scoring:
+  batch_size: 8              # d3 questions per forward pass
+  foil_seed: 42
+  foil_entities: 2           # claims from other videos added per scene to measure false accepts
+  foil_actions: 1
+  reference_threshold: 0.7   # minimum claim score to enter the pooled recall reference
+
+finetuning:
+  min_scene_score: null      # drop teacher scenes whose mean unit score is below this
+  score_units: [context, entity, action]
+
+evaluation:
+  match_threshold: 0.8       # BGE cosine similarity to pair topics, entities and actions

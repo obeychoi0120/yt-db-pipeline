@@ -1,0 +1,4 @@
+# Tests and lint (CPU only).
+-r requirements-main.txt
+pytest
+ruff
