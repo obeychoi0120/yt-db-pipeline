@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 import json
+import os
 import subprocess
 import sys
 import time
@@ -17,6 +18,11 @@ DOWNLOAD_DEFAULTS = {
     "sleep_seconds": 10,
     "rate_limit_sleep_seconds": 600,
     "max_rate_limit_retries": 3,
+    # Corporate networks: an HTTP(S) proxy, and either the proxy's CA certificate or no
+    # certificate checks at all. None/False leaves yt-dlp's own behaviour.
+    "proxy": None,
+    "ca_cert_file": None,
+    "no_check_certificates": False,
 }
 METADATA_FIELDS = (
     "id", "title", "channel", "channel_id", "uploader", "upload_date", "duration",
@@ -29,7 +35,54 @@ def download_settings(config) -> dict:
     values = {**DOWNLOAD_DEFAULTS, **((config.get("preparation") or {}).get("download") or {})}
     if type(values["height"]) is not int or values["height"] <= 0:
         raise ValueError("preparation.download.height must be a positive integer")
+    if values["ca_cert_file"] and not Path(values["ca_cert_file"]).expanduser().is_file():
+        raise ValueError(f"preparation.download.ca_cert_file not found: {values['ca_cert_file']}")
+    if values["cookies_file"] and not Path(values["cookies_file"]).expanduser().is_file():
+        raise ValueError(f"preparation.download.cookies_file not found: {values['cookies_file']}")
     return values
+
+
+def ytdlp_command(url: str, video_path: Path, metadata_stem: Path, settings: dict) -> list[str]:
+    command = [
+        "yt-dlp", "--ignore-config", "--no-playlist", "--continue", "--no-overwrites",
+        "--retries", "3", "--fragment-retries", "3", "--socket-timeout", "30",
+        "--write-info-json", "-f", format_selector(settings["height"]),
+        "--remux-video", "mp4",
+        "-o", str(video_path.with_suffix(".%(ext)s")),
+        "-o", f"infojson:{metadata_stem}",
+    ]
+    if settings["cookies_file"]:
+        command += ["--cookies", str(Path(settings["cookies_file"]).expanduser())]
+    if settings["proxy"]:
+        command += ["--proxy", settings["proxy"]]
+    if settings["no_check_certificates"]:
+        command.append("--no-check-certificates")
+    elif settings["ca_cert_file"]:
+        # yt-dlp trusts only certifi's bundle unless told to use the system store, which
+        # SSL_CERT_FILE (set in ytdlp_env) then points at the proxy's certificate.
+        command += ["--compat-options", "no-certifi"]
+    return [*command, url]
+
+
+def ytdlp_env(settings: dict) -> dict[str, str]:
+    """yt-dlp's environment; the proxy also reaches its helpers (deno for JS challenges)."""
+    env = dict(os.environ)
+    if settings["proxy"]:
+        for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            env[key] = settings["proxy"]
+    if settings["ca_cert_file"] and not settings["no_check_certificates"]:
+        path = str(Path(settings["ca_cert_file"]).expanduser())
+        for key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "DENO_CERT"):
+            env[key] = path
+    return env
+
+
+def shown_proxy(proxy: str | None) -> str | None:
+    """The proxy for logs, without a user name or password."""
+    if not proxy or "@" not in proxy:
+        return proxy
+    scheme, _, rest = proxy.rpartition("://")
+    return f"{scheme}://***@{rest.split('@', 1)[1]}" if scheme else "***@" + proxy.split("@", 1)[1]
 
 
 def format_selector(height: int) -> str:
@@ -61,12 +114,14 @@ def valid_video(path: Path) -> bool:
         return False
 
 
-def run_ytdlp(command) -> tuple[int, bool]:
+def run_ytdlp(command, env=None) -> tuple[int, bool]:
     """Relay output live while keeping only a small tail for rate-limit detection."""
     rate_limited = False
     tail = ""
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+    with subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env
+    ) as process:
         try:
             while chunk := process.stdout.read1(8192):
                 output = decoder.decode(chunk)
@@ -132,22 +187,13 @@ def download_videos(context, rows, *, settings) -> dict:
             counts["failed"] += 1
             failures.append({"content_id": cid, "reason": "invalid_existing_file"})
             continue
-        command = [
-            "yt-dlp", "--ignore-config", "--no-playlist", "--continue", "--no-overwrites",
-            "--retries", "3", "--fragment-retries", "3", "--socket-timeout", "30",
-            "--write-info-json", "-f", format_selector(settings["height"]),
-            "--remux-video", "mp4",
-            "-o", str(videos_dir / f"{cid}.%(ext)s"),
-            "-o", f"infojson:{metadata_dir / cid}",
-        ]
-        if settings["cookies_file"]:
-            command += ["--cookies", str(Path(settings["cookies_file"]).expanduser())]
-        command.append(row["url"])
+        command = ytdlp_command(row["url"], path, metadata_dir / cid, settings)
+        env = ytdlp_env(settings)
         print(f"\n{label}: downloading", flush=True)
         delay = settings["rate_limit_sleep_seconds"]
         ok = False
         for attempt in range(settings["max_rate_limit_retries"] + 1):
-            returncode, rate_limited = run_ytdlp(command)
+            returncode, rate_limited = run_ytdlp(command, env)
             ok = returncode == 0 and valid_video(path)
             if ok or not rate_limited or attempt == settings["max_rate_limit_retries"]:
                 break

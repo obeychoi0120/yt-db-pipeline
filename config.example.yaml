@@ -12,6 +12,11 @@ preparation:
     sleep_seconds: 10      # pause after each download
     rate_limit_sleep_seconds: 600
     max_rate_limit_retries: 3
+    # Corporate network: proxy URL, and the proxy's CA certificate (preferred) or
+    # no_check_certificates: true to skip certificate checks entirely.
+    proxy: null              # e.g. http://proxy.example.com:8080
+    ca_cert_file: null       # e.g. /path/to/company_ca.crt
+    no_check_certificates: false
   split:
     seed: 42
     ratios: {train: 0.8, val: 0.1, test: 0.1}

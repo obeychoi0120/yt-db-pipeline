@@ -37,6 +37,7 @@ cp config.example.yaml config.yaml
 | `preparation.video_list` | `[Category]` 헤더와 `001_Category001 https://…` 줄로 된 TXT 목록 |
 | `preparation.data_root` | 내려받은 영상(`videos/`)과 메타데이터(`metadata/`)를 둘 위치 |
 | `preparation.download` | 선호 해상도(`height`, 기본 360), 쿠키 파일 경로, 대기 시간 |
+| `preparation.download.proxy`, `ca_cert_file`, `no_check_certificates` | 사내망용. 프록시 주소와 프록시의 CA 인증서를 주거나, 인증서 검사를 끕니다(`SSL: CERTIFICATE_VERIFY_FAILED`가 날 때) |
 | `models.<이름>` | 생성 모델은 `backend: vllm`(로컬 체크포인트 `path`) 또는 `backend: gemini`. `d3`, `bge`는 `path`만 둡니다 |
 | `models.<이름>.mm_processor_kwargs` | vLLM 모델의 이미지 처리 인자. Gemma는 `max_soft_tokens: 140`(키프레임당 120토큰) |
 | `extraction.graph.<이름>.scene_max_new_tokens` | 모델별 출력 토큰 한도 |

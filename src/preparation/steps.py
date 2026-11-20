@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pipeline_logging import log_step_start
-from preparation.download import download_settings, download_videos
+from preparation.download import download_settings, download_videos, shown_proxy
 from preparation.keyframes import extract_keyframes
 from preparation.manifest import (
     MANIFEST_FIELDS, SPLIT_FIELDS, SPLITS, category_of, manifest_rows_from_txt,
@@ -54,6 +54,7 @@ def make_split(context, *, force=False, **_):
 def download(context, *, limit=None, content_ids=None, **_):
     settings = download_settings(context.config)
     shown = {key: value for key, value in settings.items() if key != "cookies_file"}
+    shown["proxy"] = shown_proxy(settings["proxy"])
     log_step_start(context, "download-videos", data_root=context.data_root,
                    cookies=bool(settings["cookies_file"]), **shown)
     rows = read_manifest_rows(context.manifest_path)

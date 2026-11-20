@@ -71,3 +71,30 @@ def test_six_keyframes_per_thirty_second_window():
         [2.5, 7.5, 12.5, 17.5, 22.5, 27.5], [32.5, 37.5, 42.5, 47.5, 52.5, 57.5]
     ]
     assert windows[2]["keyframe_timestamps"] == [62.5]
+
+
+def test_ytdlp_command_for_a_corporate_proxy(tmp_path):
+    from pathlib import Path
+
+    from preparation.download import (
+        DOWNLOAD_DEFAULTS, shown_proxy, ytdlp_command, ytdlp_env,
+    )
+
+    ca = tmp_path / "ca.crt"
+    ca.write_text("cert")
+    video, info = Path("/d/videos/v.mp4"), Path("/d/metadata/v")
+    plain = ytdlp_command("https://youtu.be/x", video, info, dict(DOWNLOAD_DEFAULTS))
+    assert "--proxy" not in plain and "--no-check-certificates" not in plain
+    assert plain[-1] == "https://youtu.be/x"
+    assert "/d/videos/v.%(ext)s" in plain
+
+    settings = {**DOWNLOAD_DEFAULTS, "proxy": "http://p:8080", "ca_cert_file": str(ca)}
+    command = ytdlp_command("https://youtu.be/x", video, info, settings)
+    assert command[command.index("--proxy") + 1] == "http://p:8080"
+    assert command[command.index("--compat-options") + 1] == "no-certifi"
+    env = ytdlp_env(settings)
+    assert env["HTTPS_PROXY"] == "http://p:8080" and env["SSL_CERT_FILE"] == str(ca)
+
+    insecure = ytdlp_command("u", video, info, {**settings, "no_check_certificates": True})
+    assert "--no-check-certificates" in insecure and "--compat-options" not in insecure
+    assert shown_proxy("http://user:pw@p:8080") == "http://***@p:8080"
