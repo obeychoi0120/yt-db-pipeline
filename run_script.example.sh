@@ -30,10 +30,11 @@ python -m finetuning build-dataset --run-id $RUN_ID --schema $PROMPT --min-scene
 python -m finetuning model-view --output artifacts/models/gemma4_e2b_view
 
 # 5-2. LoRA 학습과 병합 (이 두 줄은 conda activate gemma_ft 환경에서 실행)
-MODEL_PATH=artifacts/models/gemma4_e2b_view 
-TRAIN_DATA=artifacts/runs/$RUN_ID/sft/train.jsonl 
-VAL_DATA=artifacts/runs/$RUN_ID/sft/val.jsonl 
-bash src/finetuning/train_lora.sh artifacts/runs/$RUN_ID/lora 3
+MODEL_VIEW=artifacts/models/gemma4_e2b_view
+TRAIN_DATA=artifacts/runs/$RUN_ID/sft/train.jsonl
+VAL_DATA=artifacts/runs/$RUN_ID/sft/val.jsonl
+LORA_DIR=artifacts/runs/$RUN_ID/lora
+bash src/finetuning/train_lora.sh --model $MODEL_VIEW --train-data $TRAIN_DATA --val-data $VAL_DATA --output-dir $LORA_DIR --epochs 3
 python -m finetuning merge --training-dir artifacts/runs/$RUN_ID/lora --output artifacts/models/gemma4_e2b_lora
 
 # 6. 평가 (먼저 config.yaml의 models와 extraction.graph에 gemma4_e2b_lora를 추가)

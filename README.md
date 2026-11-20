@@ -70,9 +70,9 @@ python -m scoring report --run-id $RUN_ID --models gemini gemma4_e2b
 python -m finetuning build-dataset --run-id $RUN_ID --schema $PROMPT --min-scene-score 0.7
 python -m finetuning model-view --model gemma4_e2b --output /path/to/gemma4_e2b_view
 conda activate gemma_ft
-MODEL_PATH=/path/to/gemma4_e2b_view \
-TRAIN_DATA=artifacts/runs/$RUN_ID/sft/train.jsonl VAL_DATA=artifacts/runs/$RUN_ID/sft/val.jsonl \
-    bash src/finetuning/train_lora.sh artifacts/runs/$RUN_ID/lora 3
+bash src/finetuning/train_lora.sh --model /path/to/gemma4_e2b_view \
+    --train-data artifacts/runs/$RUN_ID/sft/train.jsonl --val-data artifacts/runs/$RUN_ID/sft/val.jsonl \
+    --output-dir artifacts/runs/$RUN_ID/lora --epochs 3
 python -m finetuning merge --training-dir artifacts/runs/$RUN_ID/lora --output /path/to/gemma4_e2b_lora
 conda activate vc_cloud
 
