@@ -6,3 +6,6 @@
 **/.ruff_cache/
 config.yaml
 cookies*.txt
+run_script*.sh
+!run_script.example.sh
+/artifacts/models/
