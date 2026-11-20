@@ -19,7 +19,11 @@ class ManifestContractError(ValueError):
 
 
 def read_txt_video_list(txt_file_path: str | Path) -> list[tuple[str, str]]:
-    """Read ``[Category]`` sections of ``Category_Manual|Auto_NNN <url>`` lines."""
+    """Read ``[Category]`` sections of ``NNN_CategoryNNN <url>`` lines.
+
+    The first number is the position in the whole list (001, 002, ...) and the second the
+    position within the category.
+    """
     path = Path(txt_file_path)
     current_category = ""
     rows: list[tuple[str, str]] = []
@@ -33,14 +37,18 @@ def read_txt_video_list(txt_file_path: str | Path) -> list[tuple[str, str]]:
             if category_match:
                 current_category = category_match.group(1)
                 continue
-            item_match = re.fullmatch(r"([A-Za-z]+)_(Manual|Auto)_(\d{3})\s+(https?://\S+)", line)
+            item_match = re.fullmatch(r"(\d{3})_([A-Za-z]+)(\d{3})\s+(https?://\S+)", line)
             if not item_match:
                 raise ManifestContractError(f"invalid video list line {line_number}: {line}")
-            item_category, source, item_number, url = item_match.groups()
-            list_id = f"{item_category}_{source}_{item_number}"
+            index, item_category, item_number, url = item_match.groups()
+            list_id = f"{index}_{item_category}{item_number}"
             if current_category and item_category != current_category:
                 raise ManifestContractError(
                     f"line {line_number} list id does not match [{current_category}]: {list_id}"
+                )
+            if int(index) != len(rows) + 1:
+                raise ManifestContractError(
+                    f"line {line_number} index must be {len(rows) + 1:03d}: {list_id}"
                 )
             if list_id in seen_list_ids:
                 raise ManifestContractError(f"duplicate list id on line {line_number}: {list_id}")
@@ -82,8 +90,11 @@ def normalize_content_id(value: object) -> str:
 
 
 def category_of(content_id: str) -> str:
-    """The list category is the content_id prefix: News_Manual_001_<video id> -> News."""
-    return content_id.split("_", 1)[0]
+    """The list category is in the second part: 001_News001_<video id> -> News."""
+    match = re.match(r"\d{3}_([A-Za-z]+)\d{3}_", content_id)
+    if not match:
+        raise ManifestContractError(f"content_id does not start with NNN_CategoryNNN_: {content_id}")
+    return match.group(1)
 
 
 def manifest_rows_from_txt(txt_file_path: str | Path) -> list[dict[str, str]]:

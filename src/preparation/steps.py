@@ -22,6 +22,7 @@ def create_manifest(context, *, video_list=None, **_):
     if not source:
         raise ValueError("pass --list or set preparation.video_list")
     source = Path(source).expanduser()
+    source = source if source.is_absolute() else context.root / source
     log_step_start(context, "create-manifest", video_list=source, output=context.manifest_path)
     rows = manifest_rows_from_txt(source)
     write_csv(context.manifest_path, MANIFEST_FIELDS, rows)

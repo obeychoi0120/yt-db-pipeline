@@ -34,7 +34,7 @@ cp config.example.yaml config.yaml
 
 | 키 | 내용 |
 | --- | --- |
-| `preparation.video_list` | `[Category]` 헤더와 `Category_Manual_001 https://…` 줄로 된 TXT 목록 |
+| `preparation.video_list` | `[Category]` 헤더와 `001_Category001 https://…` 줄로 된 TXT 목록 |
 | `preparation.data_root` | 내려받은 영상(`videos/`)과 메타데이터(`metadata/`)를 둘 위치 |
 | `preparation.download` | 선호 해상도(`height`, 기본 360), 쿠키 파일 경로, 대기 시간 |
 | `models.<이름>` | 생성 모델은 `backend: vllm`(로컬 체크포인트 `path`) 또는 `backend: gemini`. `d3`, `bge`는 `path`만 둡니다 |
