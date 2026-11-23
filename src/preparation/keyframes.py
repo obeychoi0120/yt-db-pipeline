@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from tqdm import tqdm
 
 from artifact_io import write_jsonl
 from preparation.video.fixed30 import prepare_visual_item, visual_evidence_matches
@@ -65,17 +67,25 @@ def extract_keyframes(context, content_ids, *, force=False, workers=4) -> dict:
 
     totals = {"videos": 0, "scenes": 0, "keyframes": 0, "new_frames": 0, "missing_video": 0}
     failures = []
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        for content_id, error, counts in pool.map(prepare, content_ids):
+    bar = tqdm(total=len(content_ids), desc="keyframes", unit="video", dynamic_ncols=True)
+    with bar, ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(prepare, content_id) for content_id in content_ids]
+        for future in as_completed(futures):
+            content_id, error, counts = future.result()
             if error == "missing_video":
                 totals["missing_video"] += 1
             elif error is not None:
                 failures.append({"content_id": content_id, "error": error})
-                print(f"[KEYFRAMES] {content_id}: FAILED: {error}", flush=True)
+                tqdm.write(f"[KEYFRAMES] {content_id}: FAILED: {error}")
             else:
                 totals["videos"] += 1
                 for key in ("scenes", "keyframes", "new_frames"):
                     totals[key] += counts[key]
+            bar.set_postfix(done=totals["videos"], new_frames=totals["new_frames"],
+                            not_downloaded=totals["missing_video"], failed=len(failures),
+                            refresh=False)
+            bar.update(1)
+    failures.sort(key=lambda row: row["content_id"])
     failure_path = context.preparation_dir / "keyframe_failures.jsonl"
     if failures:
         write_jsonl(failure_path, failures)

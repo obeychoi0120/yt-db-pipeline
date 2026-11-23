@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from tqdm import tqdm
+
 from preparation.video.images import verified_image_size
 from visual_sampling import timestamp_stem, truncate_timestamp
 
@@ -140,7 +142,7 @@ def _extract_missing_keyframes(
             if image_size_actual != (width, height):
                 raise RuntimeError(f"Invalid keyframe dimensions: {destination}")
             if clamp_message is not None:
-                print(clamp_message, flush=True)
+                tqdm.write(clamp_message)
         for image in staging.iterdir():
             # Creation is atomic and cannot replace a concurrently published file.
             os.link(image, output / image.name)
