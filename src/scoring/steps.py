@@ -15,9 +15,9 @@ from scoring.d3_client import judge_name, open_judge
 from scoring.questions import STATE, claim_score, question, unit_scores
 from visual_sampling import timestamp_stem
 
-SCORING_VERSION = "d3-claims/v1"
+SCORING_VERSION = "d3-claims/v2"
 DEFAULTS = {
-    "batch_size": 8, "foil_seed": 42, "foil_entities": 2, "foil_actions": 1,
+    "batch_size": 8, "foil_seed": 42, "foil_entities": 1, "foil_actions": 0,
     # --d3-server only: the model name sent to the server and the requests kept in flight
     "server_model": "vllm-sr/d3-mini", "server_concurrency": 32,
 }
@@ -50,7 +50,8 @@ def keyframe_paths(visual: dict) -> dict[int, list[str]]:
     }
 
 
-CLAIM_FIELDS = ("id", "unit", "kind", "value", "value_name", "parent", "entity", "actor", "action")
+CLAIM_FIELDS = ("id", "unit", "kind", "value", "attributes", "actor", "target", "tool", "place",
+                "parent")
 SCORE_FIELDS = ("p", "abstain", "judge_choice", "effective", "note")
 IDENTITY_KEYS = ("version", "judge", "state", "foils")
 

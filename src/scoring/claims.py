@@ -1,9 +1,9 @@
 """Split one scene graph into atomic claims a decision model can check.
 
 Units follow the fields that are embedded downstream: Context (medium, format, topics),
-Entity (existence, attributes), Action (occurrence) and Role (target, tool, place links).
-A claim's parent is the claim it depends on: an attribute needs its entity, an action its
-actor, a role link its action.
+Entity (one claim per entity, its attributes included) and Action (one claim per action,
+its target, tool and place included). The judge reads every keyframe again for each claim,
+so attributes and roles are not claims of their own. An action's parent is its actor.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ FORMATS = {
     "unknown": "Cannot be determined",
 }
 ROLES = ("target", "tool", "place")
-UNITS = ("context", "entity", "action", "role")
+UNITS = ("context", "entity", "action")
 
 
 def describe(entity: dict) -> str:
@@ -49,37 +49,24 @@ def graph_claims(graph: dict) -> list[dict]:
     for index, topic in enumerate(graph["topics"]):
         claims.append({"id": f"topic:{index}", "unit": "context", "kind": "topic", "value": topic})
     for entity in graph["entities"]:
-        entity_id = f"entity:{entity['id']}"
-        claims.append({"id": entity_id, "unit": "entity", "kind": "entity", "value": entity["name"]})
-        for index, attribute in enumerate(entity["attributes"]):
-            claims.append({
-                "id": f"attribute:{entity['id']}:{index}", "unit": "entity", "kind": "attribute",
-                "value": attribute, "entity": entity["name"], "parent": entity_id,
-            })
+        claims.append({
+            "id": f"entity:{entity['id']}", "unit": "entity", "kind": "entity",
+            "value": entity["name"], "attributes": list(entity["attributes"]),
+        })
     for index, action in enumerate(graph["actions"]):
         actor = entities.get(action["actor"])
-        action_id = f"action:{index}"
+        # A role the graph leaves unknown or states as none adds nothing to check.
+        roles = {role: describe(entities[action[role]]) for role in ROLES
+                 if action[role] not in (None, "unknown")}
         claims.append({
-            "id": action_id, "unit": "action", "kind": "action", "value": action["action"],
-            "actor": describe(actor) if actor else None,
+            "id": f"action:{index}", "unit": "action", "kind": "action", "value": action["action"],
+            "actor": describe(actor) if actor else None, **roles,
             **({"parent": f"entity:{actor['id']}"} if actor else {}),
         })
-        for role in ROLES:
-            value = action[role]
-            if value == "unknown":
-                continue  # the graph makes no claim
-            claims.append({
-                "id": f"role:{index}:{role}", "unit": "role", "kind": role,
-                "value": "none" if value is None else value,
-                "value_name": "none" if value is None else describe(entities[value]),
-                "action": action["action"], "actor": describe(actor) if actor else None,
-                "options": {entity["id"]: describe(entity) for entity in graph["entities"]},
-                "parent": action_id,
-            })
     return claims
 
 
-def foil_claims(graph: dict, pool: dict, *, seed: str, entities: int = 2, actions: int = 1):
+def foil_claims(graph: dict, pool: dict, *, seed: str, entities: int = 1, actions: int = 0):
     """Claims taken from other videos; a reliable judge rejects them.
 
     ``pool`` holds entity names and action phrases of the other videos. Names and phrases
@@ -91,7 +78,8 @@ def foil_claims(graph: dict, pool: dict, *, seed: str, entities: int = 2, action
     names = sorted(name for name in pool["entities"] if name.casefold() not in own_names)
     phrases = sorted(phrase for phrase in pool["actions"] if phrase.casefold() not in own_actions)
     foils = [
-        {"id": f"foil:entity:{index}", "unit": "foil", "kind": "entity", "value": name}
+        {"id": f"foil:entity:{index}", "unit": "foil", "kind": "entity", "value": name,
+         "attributes": []}
         for index, name in enumerate(rng.sample(names, min(entities, len(names))))
     ]
     actor = next((describe(entity) for entity in graph["entities"]), None)

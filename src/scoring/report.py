@@ -78,13 +78,6 @@ def model_summary(context, model, split=None) -> dict:
         summary["per_video"][unit] = per_video
         summary["units"][unit] = bootstrap_interval(per_video.values())
     claims = [claim for row in rows for claim in row["claims"]]
-    # A role link names an entity or states that there is none; the two behave differently.
-    summary["roles"] = {}
-    for name, wanted in (("linked", False), ("none", True)):
-        values = [claim["effective"] for claim in claims if claim["unit"] == "role"
-                  and (claim["value"] == "none") == wanted and claim.get("effective") is not None]
-        if values:
-            summary["roles"][name] = {"count": len(values), "mean": sum(values) / len(values)}
     abstain = [claim["abstain"] for claim in claims if "abstain" in claim]
     summary["claims"] = len(claims)
     summary["claims_per_scene"] = len(claims) / len(rows)
@@ -104,14 +97,21 @@ def model_summary(context, model, split=None) -> dict:
         key=lambda item: item[0],
     )[:15]
     summary["lowest_claims"] = [
-        {"content_id": cid, "scene_idx": idx, "kind": claim["kind"], "value": claim["value"],
-         "effective": round(score, 3), **({"actor": claim["actor"]} if claim.get("actor") else {}),
-         **({"action": claim["action"], "value": claim.get("value_name", claim["value"])}
-            if claim["unit"] == "role" else {}),
-         **({"entity": claim["entity"]} if claim.get("entity") else {})}
+        {"content_id": cid, "scene_idx": idx, "kind": claim["kind"], "effective": round(score, 3),
+         "text": claim_text(claim)}
         for score, cid, idx, claim in lowest
     ]
     return summary
+
+
+def claim_text(claim: dict) -> str:
+    """One claim as the report shows it: an entity with its attributes, an action with its roles."""
+    if claim["kind"] == "entity" and claim.get("attributes"):
+        return f"{claim['value']} ({'; '.join(claim['attributes'])})"
+    if claim["kind"] == "action":
+        roles = [f"{role}: {claim[role]}" for role in ("target", "tool", "place") if claim.get(role)]
+        return " / ".join([claim.get("actor") or "unknown", str(claim["value"]), *roles])
+    return str(claim["value"])
 
 
 def paired_difference(first, second) -> dict:
@@ -143,10 +143,11 @@ def write_report(context, *, models, split=None):
     lines = [
         f"# d3 채점 보고서 ({context.run_id}" + (f", {split}" if split else "") + ")", "",
         "장면 그래프를 주장 단위로 나눠 d3 Decision 모델이 키프레임과 대조한 결과입니다. "
-        "점수는 주장이 맞을 확률의 평균이고, 하위 주장은 상위 주장의 점수를 곱해 반영했습니다. "
+        "점수는 주장이 맞을 확률의 평균입니다. 엔티티는 속성까지, 행동은 대상·도구·장소까지 "
+        "한 주장으로 묻고, 행동에는 actor 엔티티의 점수를 곱했습니다. "
         "괄호는 영상 단위 bootstrap 95% 구간입니다(영상 2개 미만이면 생략).", "",
         "## 단위별 정밀도", "",
-        "| 모델 | Context | Entity | Action | 역할 연결 |", "| --- | --- | --- | --- | --- |",
+        "| 모델 | Context | Entity | Action |", "| --- | --- | --- | --- |",
     ]
     for model, summary in summaries.items():
         lines.append(f"| {model} | " + " | ".join(_cell(summary["units"][u]) for u in UNITS) + " |")
@@ -167,20 +168,10 @@ def write_report(context, *, models, split=None):
                          f"{foil['accepted']:.3f} |")
     lines += ["", "미끼는 맞지 않아야 하는 주장이므로 값이 낮을수록 Judge가 믿을 만합니다. "
               "우연히 실제로 화면에 있는 대상이 뽑힐 수 있어 0이 되지는 않습니다.", ""]
-    lines += ["## 역할 연결 세부", "",
-              "| 모델 | 엔티티를 지정한 연결 | 평균 | `none`이라고 한 연결 | 평균 |",
-              "| --- | --- | --- | --- | --- |"]
-    for model, s in summaries.items():
-        cells = []
-        for name in ("linked", "none"):
-            item = s["roles"].get(name)
-            cells += ["0", "–"] if item is None else [str(item["count"]), f"{item['mean']:.3f}"]
-        lines.append(f"| {model} | " + " | ".join(cells) + " |")
-    lines.append("")
     differences = {}
     if len(models) >= 2:
         lines += ["## 같은 영상 쌍 비교", "",
-                  "| 비교 | Context | Entity | Action | 역할 연결 |", "| --- | --- | --- | --- | --- |"]
+                  "| 비교 | Context | Entity | Action |", "| --- | --- | --- | --- |"]
         for index, first in enumerate(models):
             for second in models[index + 1:]:
                 diff = paired_difference(summaries[first], summaries[second])
@@ -202,10 +193,7 @@ def write_report(context, *, models, split=None):
         lines += [f"## 점수가 낮은 주장: {model}", "",
                   "| 영상 | 장면 | 종류 | 주장 | 유효 점수 |", "| --- | --- | --- | --- | --- |"]
         for claim in s["lowest_claims"]:
-            subject = claim.get("entity") or claim.get("actor")
-            text = f"{subject}: {claim['value']}" if subject else str(claim["value"])
-            if "action" in claim:
-                text = f"{subject or 'unknown'} / {claim['action']} → {claim['value']}"
+            text = claim["text"]
             lines.append(f"| {claim['content_id']} | {claim['scene_idx']} | {claim['kind']} | "
                          f"{text} | {claim['effective']:.3f} |")
         lines.append("")

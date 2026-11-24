@@ -68,8 +68,8 @@ scoring:
   server_model: vllm-sr/d3-mini   # --d3-server: model name sent to the server
   server_concurrency: 32     # --d3-server: scenes in flight at once
   foil_seed: 42
-  foil_entities: 2           # claims from other videos added per scene to measure false accepts
-  foil_actions: 1
+  foil_entities: 1           # claims from other videos added per scene to measure false accepts
+  foil_actions: 0
   reference_threshold: 0.7   # minimum claim score to enter the pooled recall reference
 
 finetuning:

@@ -13,6 +13,7 @@ VERDICT = {
     "contradicted": "No, the keyframes show this is wrong or absent",
     "cannot_tell": "The keyframes do not show enough to decide",
 }
+ROLE_LABELS = {"target": "Acted on", "tool": "Tool or means", "place": "Place"}
 CENTRALITY = ["Not shown in the segment", "Shown but incidental", "A main subject of the segment"]
 
 
@@ -37,26 +38,14 @@ def question(claim: dict) -> dict | None:
             "criteria": list(CENTRALITY),
         }
     if kind == "entity":
+        if claim["attributes"]:
+            return _verdict("Is this visible in at least one keyframe, matching the whole "
+                            f"description: {value} ({'; '.join(claim['attributes'])})?")
         return _verdict(f"Is this visible in at least one keyframe: {value}?")
-    if kind == "attribute":
-        return _verdict(
-            f"Look at the {claim['entity']} in the keyframes. "
-            f"Is this description of it correct: \"{value}\"?"
-        )
-    if kind == "action":
-        subject = f"the {claim['actor']}" if claim.get("actor") else "someone or something"
-        return _verdict(f"Do the keyframes show {subject} doing this: \"{value}\"?")
-    subject = f"the {claim['actor']}" if claim.get("actor") else "someone or something"
-    asked = {
-        "target": "what is acted on",
-        "tool": "what tool or means is used to do it",
-        "place": "where does it take place",
-    }[kind]
-    return {
-        "type": "choice",
-        "instructions": f"In the action \"{claim['action']}\" done by {subject}, {asked}?",
-        "criteria": {**claim["options"], "none": "Nothing, or none of the listed items"},
-    }
+    lines = ["Do the keyframes show this action with every listed detail correct?",
+             f"Actor: {claim.get('actor') or 'someone or something'}", f"Action: \"{value}\""]
+    lines += [f"{label}: {claim[role]}" for role, label in ROLE_LABELS.items() if claim.get(role)]
+    return _verdict("\n".join(lines))
 
 
 def claim_score(claim: dict, answer: dict | None) -> dict:

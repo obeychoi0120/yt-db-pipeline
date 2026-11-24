@@ -37,43 +37,53 @@ def test_name_form_rejects_duplicate_names():
         serialize_graph(graph, "name")
 
 
-def test_claims_cover_every_unit_and_link_parents():
+def test_claims_fold_attributes_and_roles_into_their_parent():
     claims = {claim["id"]: claim for claim in graph_claims(ID_GRAPH)}
-    assert {"medium", "format", "topic:0", "topic:1", "entity:actor_1", "attribute:actor_1:0",
-            "action:0", "role:0:target", "role:0:tool", "role:1:tool"} <= set(claims)
-    assert "role:0:place" not in claims  # unknown is not a claim
-    assert claims["attribute:actor_1:0"]["parent"] == "entity:actor_1"
+    assert set(claims) == {"medium", "format", "topic:0", "topic:1", "entity:actor_1",
+                           "entity:target_1", "entity:tool_1", "action:0", "action:1"}
+    assert {claim["unit"] for claim in claims.values()} == {"context", "entity", "action"}
+    assert claims["entity:actor_1"]["attributes"] == ["striped apron"]
     assert claims["action:0"]["parent"] == "entity:actor_1"
-    assert claims["role:1:tool"]["value"] == "none"
-    assert claims["role:0:tool"]["value_name"] == "long knife"
+    assert claims["action:0"]["target"] == "salmon fillet (raw)"
+    assert claims["action:0"]["tool"] == "long knife"
+    assert "place" not in claims["action:0"]  # unknown is not checked
+    assert "tool" not in claims["action:1"]  # neither is an explicit none
 
 
 def test_questions_and_scores():
-    claims = graph_claims(ID_GRAPH)
-    by_id = {claim["id"]: claim for claim in claims}
-    role = question(by_id["role:0:target"])
-    assert set(role["criteria"]) == {"actor_1", "target_1", "tool_1", "none"}
+    by_id = {claim["id"]: claim for claim in graph_claims(ID_GRAPH)}
+    assert question(by_id["entity:actor_1"])["instructions"] == (
+        "Is this visible in at least one keyframe, matching the whole description: "
+        "woman (striped apron)?")
+    assert question(by_id["entity:tool_1"])["instructions"] == (
+        "Is this visible in at least one keyframe: long knife?")
+    assert question(by_id["action:0"])["instructions"] == (
+        "Do the keyframes show this action with every listed detail correct?\n"
+        "Actor: woman (striped apron)\nAction: \"slicing thinly\"\n"
+        "Acted on: salmon fillet (raw)\nTool or means: long knife")
+    assert question(by_id["action:1"])["instructions"].endswith(
+        "Action: \"plating\"\nActed on: salmon fillet (raw)")
+    assert set(question(by_id["action:0"])["criteria"]) == {
+        "supported", "contradicted", "cannot_tell"}
     assert question({"kind": "format", "value": "news"}) is None
     assert claim_score({"kind": "format", "value": "news"}, None)["p"] == 0.0
     verdict = {"type": "choice", "choice": "supported",
                "probabilities": {"supported": 0.8, "contradicted": 0.1, "cannot_tell": 0.1}}
     assert claim_score(by_id["entity:actor_1"], verdict) == {"p": 0.8, "abstain": 0.1}
     assert claim_score(by_id["topic:0"], {"type": "score", "score": 1.0})["p"] == 0.5
-    picked = {"type": "choice", "choice": "tool_1", "probabilities": {"target_1": 0.3, "tool_1": 0.7}}
-    assert claim_score(by_id["role:0:target"], picked)["p"] == 0.3
+    picked = {"type": "choice", "choice": "animation",
+              "probabilities": {"live_action": 0.3, "animation": 0.7}}
+    assert claim_score(by_id["medium"], picked) == {"p": 0.3, "judge_choice": "animation"}
 
 
-def test_child_claims_count_no_more_than_their_parent():
+def test_an_action_counts_no_more_than_its_actor():
     claims = [
         {"id": "entity:a", "unit": "entity", "p": 0.5},
-        {"id": "attribute:a:0", "unit": "entity", "p": 1.0, "parent": "entity:a"},
         {"id": "action:0", "unit": "action", "p": 0.8, "parent": "entity:a"},
-        {"id": "role:0:tool", "unit": "role", "p": 0.5, "parent": "action:0"},
     ]
     scores = unit_scores(claims)
     assert scores["entity"]["score"] == pytest.approx(0.5)
     assert scores["action"]["score"] == pytest.approx(0.4)
-    assert scores["role"]["score"] == pytest.approx(0.2)
 
 
 def test_foils_come_from_other_videos_only():
@@ -118,7 +128,7 @@ def test_sft_record_and_scene_score():
     record = build_record("PROMPT", "TARGET", ["a.png", "b.png"], "video", 3)
     assert record["messages"][0]["content"] == "<image><image>PROMPT"
     assert record["messages"][1] == {"role": "assistant", "content": "TARGET"}
-    row = {"scores": {"context": {"score": 0.9}, "entity": {"score": 0.5}, "role": {"score": 0.0}}}
+    row = {"scores": {"context": {"score": 0.9}, "entity": {"score": 0.5}}}
     assert scene_score(row, ["context", "entity", "action"]) == pytest.approx(0.7)
 
 
@@ -142,10 +152,11 @@ def test_bootstrap_interval_contains_the_mean():
 def test_saved_scores_match_only_an_unchanged_graph():
     from scoring.steps import _claim_keys
 
-    claim = {"id": "entity:e1", "unit": "entity", "kind": "entity", "value": "a dog"}
+    claim = {"id": "entity:e1", "unit": "entity", "kind": "entity", "value": "a dog",
+             "attributes": ["brown"]}
     saved = [{**claim, "p": 0.9, "effective": 0.9}]
     assert _claim_keys(saved) == _claim_keys([claim])
-    assert _claim_keys(saved) != _claim_keys([{**claim, "value": "a cat"}])
+    assert _claim_keys(saved) != _claim_keys([{**claim, "attributes": ["white"]}])
 
 
 def test_changed_settings_remove_old_scores(tmp_path):

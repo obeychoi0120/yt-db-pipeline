@@ -101,8 +101,8 @@ def compare(context, *, teacher, students, split=None, limit=None, encoder=None)
         except (RuntimeError, OSError):
             scores[model] = None
     if any(scores.values()):
-        lines += ["| 모델 | 채점한 장면 | Context | Entity | Action | 역할 연결 |",
-                  "| --- | --- | --- | --- | --- | --- |"]
+        lines += ["| 모델 | 채점한 장면 | Context | Entity | Action |",
+                  "| --- | --- | --- | --- | --- |"]
         for model in models:
             s = scores[model]
             lines.append(f"| {model} | – | – | – | – | – |" if s is None else
