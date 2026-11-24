@@ -173,3 +173,15 @@ def test_changed_settings_remove_old_scores(tmp_path):
     _drop_stale_scores(tmp_path, {**identity, "foils": {"foil_seed": 7}})
     assert not (tmp_path / "a.jsonl").exists()
     assert not (tmp_path / "scoring_identity.json").exists()
+
+
+def test_video_line_averages_unit_scores_over_scenes():
+    from scoring.steps import video_line
+
+    rows = [
+        {"scores": {"context": {"score": 0.8}, "entity": {"score": 0.6}}, "foils": [{"p": 0.2}]},
+        {"scores": {"context": {"score": 0.6}, "entity": {"score": 1.0},
+                    "action": {"score": 0.5}}, "foils": [{"p": None}]},
+    ]
+    assert video_line("vid", rows, 3) == (
+        "[SCORE] vid: scenes=2/3 context=0.700 entity=0.800 action=0.500 foil=0.200")

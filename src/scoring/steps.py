@@ -10,7 +10,7 @@ from extraction.graph_warnings import blocking_tags
 from extraction.step_support import visual_rows
 from pipeline_logging import log_step_start
 from pipeline_runtime import scene_arm
-from scoring.claims import foil_claims, graph_claims
+from scoring.claims import UNITS, foil_claims, graph_claims
 from scoring.d3_client import judge_name, open_judge
 from scoring.questions import STATE, claim_score, question, unit_scores
 from visual_sampling import timestamp_stem
@@ -63,6 +63,18 @@ def _stored_claim(claim: dict) -> dict:
 def _claim_keys(claims) -> list[dict]:
     """The claims without their scores: equal when the scene graph is unchanged."""
     return [{key: claim[key] for key in CLAIM_FIELDS if key in claim} for claim in claims]
+
+
+def video_line(cid: str, rows: list[dict], usable: int) -> str:
+    """One console line for a finished video: mean unit scores over its scored scenes."""
+    parts = [f"scenes={len(rows)}/{usable}"]
+    for unit in UNITS:
+        values = [row["scores"][unit]["score"] for row in rows if unit in row["scores"]]
+        parts.append(f"{unit}=" + (f"{sum(values) / len(values):.3f}" if values else "–"))
+    foils = [f["p"] for row in rows for f in row["foils"] if f.get("p") is not None]
+    if foils:
+        parts.append(f"foil={sum(foils) / len(foils):.3f}")
+    return f"[SCORE] {cid}: " + " ".join(parts)
 
 
 def _drop_stale_scores(output_dir, identity: dict) -> None:
@@ -180,6 +192,7 @@ def score_graphs(context, *, model, split=None, limit=None, force=False, d3_serv
             pending[cid] -= 1
             if pending[cid] == 0:
                 publish(cid)
+                tqdm.write(video_line(cid, rows[cid], len(graphs[cid])))
             bar.update(1)
 
         output_dir.mkdir(parents=True, exist_ok=True)
