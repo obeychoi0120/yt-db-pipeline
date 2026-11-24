@@ -2,8 +2,9 @@
 
     vllm-sr serve vllm-sr/d3-mini -e -dp 4 --device-ids 0,1,2,3
 
-serves ``POST /v1/systemone`` with the same request and reply as ``system_one`` in process
-(the package's own ``d3_server.py`` serves the same API). Many scenes are sent at once so
+serves ``POST /v1/systemone`` in the vllm-sr/5.0 schema: keyframes go as ``assets`` whose
+placeholders stand in front of the state, which d3 reads as the images of that state. The
+reply has the same ``answers`` as ``system_one`` in process. Many scenes are sent at once so
 the server can batch them; the reply goes to the same ``on_result`` as D3WorkerPool's.
 """
 
@@ -11,7 +12,6 @@ from __future__ import annotations
 
 import base64
 import json
-import mimetypes
 import time
 import urllib.error
 import urllib.request
@@ -19,14 +19,24 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 SYSTEM_ONE_PATH = "/v1/systemone"
-# Busy replies are retried; vllm-sr answers 503 when more requests are in flight than it admits.
-RETRY_STATUSES = {429, 502, 503, 504}
+# Busy replies are retried: vllm-sr answers 529 when overloaded and 503 while starting.
+RETRY_STATUSES = {429, 502, 503, 504, 529}
 MAX_RETRIES = 8
 
 
-def data_url(path: str | Path) -> str:
-    kind = mimetypes.guess_type(str(path))[0] or "image/png"
-    return f"data:{kind};base64,{base64.b64encode(Path(path).read_bytes()).decode('ascii')}"
+def image_asset(path: str | Path) -> dict:
+    """One vllm-sr/5.0 image asset; the server detects png/jpeg/webp from the bytes."""
+    return {"type": "image", "data_base64": base64.b64encode(Path(path).read_bytes()).decode("ascii")}
+
+
+def placed_request(model: str, state, questions: dict, images=None) -> dict:
+    """A vllm-sr/5.0 request: the images' placeholders in front of the state."""
+    payload = {"model": model, "state": state, "questions": questions}
+    if images:
+        keys = [f"\u27e6img-{index}\u27e7" for index in range(1, len(images) + 1)]
+        payload["state"] = [*keys, state]
+        payload["assets"] = {key: image_asset(path) for key, path in zip(keys, images)}
+    return payload
 
 
 class D3ServerPool:
@@ -49,9 +59,7 @@ class D3ServerPool:
             return json.loads(response.read())
 
     def _ask(self, task: dict) -> dict:
-        payload = {"model": self.model, "state": task["state"], "questions": task["questions"]}
-        if task.get("images"):
-            payload["images"] = [data_url(path) for path in task["images"]]
+        payload = placed_request(self.model, task["state"], task["questions"], task.get("images"))
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         delay = 1.0
         for attempt in range(MAX_RETRIES + 1):
