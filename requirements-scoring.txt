@@ -2,8 +2,12 @@
 #
 # Confirmed in conda env vc_cloud: d3-mini loads and scores with transformers 5.19.0 after
 # adding accelerate 1.16.0 (the model card pins transformers 5.17.0).
-# flash-linear-attention is optional: without it d3 falls back to a slower reference kernel.
+# flash-linear-attention: GPU kernels for d3's Gated DeltaNet layers (version from the d3-mini
+# requirements.txt); without it transformers runs a much slower PyTorch reference.
+# causal-conv1d is optional and must be compiled against the installed torch:
+#   MAX_JOBS=8 pip install causal-conv1d --no-build-isolation
 -r requirements-main.txt
 accelerate>=1.10
 einops
+flash-linear-attention==0.5.2
 torchvision

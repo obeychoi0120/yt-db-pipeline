@@ -97,7 +97,7 @@ def compare(context, *, teacher, students, split=None, limit=None, encoder=None)
     scores = {}
     for model in models:
         try:
-            scores[model] = model_summary(context, model)
+            scores[model] = model_summary(context, model, split)
         except (RuntimeError, OSError):
             scores[model] = None
     if any(scores.values()):
@@ -108,8 +108,8 @@ def compare(context, *, teacher, students, split=None, limit=None, encoder=None)
             lines.append(f"| {model} | – | – | – | – | – |" if s is None else
                          f"| {model} | {s['scored_scenes']} | "
                          + " | ".join(_cell(s["units"][unit]) for unit in UNITS) + " |")
-        lines += ["", "d3 점수는 `python -m scoring score`로 채점해 둔 전체 장면의 값입니다. "
-                  "split을 맞추려면 같은 `--split`으로 채점한 Run에서 보고서를 만드세요."]
+        lines += ["", "d3 점수는 `python -m scoring score`로 채점해 둔 장면 중 "
+                  + (f"{split} 분할" if split else "전체") + "의 값입니다."]
     else:
         lines.append("채점 결과가 없습니다. `python -m scoring score --model <모델>`을 먼저 실행하세요.")
     lines.append("")

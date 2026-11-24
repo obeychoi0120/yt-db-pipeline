@@ -64,7 +64,9 @@ extraction:
     gemma4_e2b: {scene_max_new_tokens: 512}
 
 scoring:
-  batch_size: 8              # d3 questions per forward pass
+  batch_size: 8              # d3 questions per forward pass (in-process d3 only)
+  server_model: vllm-sr/d3-mini   # --d3-server: model name sent to the server
+  server_concurrency: 32     # --d3-server: scenes in flight at once
   foil_seed: 42
   foil_entities: 2           # claims from other videos added per scene to measure false accepts
   foil_actions: 1

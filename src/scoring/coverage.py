@@ -13,7 +13,7 @@ from artifact_io import atomic_write_json, atomic_write_jsonl, read_jsonl
 from extraction.semantic_graph.serialize import serialize_graph
 from extraction.step_support import visual_rows
 from pipeline_logging import log_step_start
-from scoring.d3_workers import D3WorkerPool
+from scoring.d3_client import open_judge
 from scoring.steps import scoring_settings, usable_scenes
 
 REFERENCE_KINDS = ("entity", "action", "topic")
@@ -31,7 +31,7 @@ def reference_text(claim: dict) -> str:
     return f"the {claim['kind']}: {claim['value']}"
 
 
-def coverage(context, *, models, split=None, limit=None, threshold=None):
+def coverage(context, *, models, split=None, limit=None, threshold=None, d3_server=None):
     if len(models) < 2:
         raise ValueError("coverage compares at least two models")
     settings = scoring_settings(context)
@@ -102,8 +102,7 @@ def coverage(context, *, models, split=None, limit=None, threshold=None):
             bar.update(1)
 
         if tasks:
-            with D3WorkerPool(context.model_path("d3"), batch_size=settings["batch_size"],
-                              log=tqdm.write) as pool:
+            with open_judge(context, settings, server=d3_server, log=tqdm.write) as pool:
                 pool.run(tasks, receive)
     summary = {"models": list(models), "threshold": threshold, "recall": {}}
     for model in models:

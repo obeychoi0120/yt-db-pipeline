@@ -39,16 +39,38 @@ def bootstrap_interval(values, *, samples=2000, seed=0, alpha=0.05):
     return {"mean": mean, "low": float(low), "high": float(high), "videos": int(len(values))}
 
 
-def model_summary(context, model) -> dict:
+def split_content_ids(context, split) -> set[str] | None:
+    """Videos of one split, or None for every video."""
+    if split is None:
+        return None
+    from preparation.manifest import read_splits
+
+    return {cid for cid, name in read_splits(context.splits_path).items() if name == split}
+
+
+def model_summary(context, model, split=None) -> dict:
     directory = context.scoring_dir(model)
     rows = load_rows(directory)
+    selected = split_content_ids(context, split)
+    if selected is not None:
+        rows = [row for row in rows if row["content_id"] in selected]
     if not rows:
-        raise RuntimeError(f"no scores for {model}; run python -m scoring score first")
-    identity = read_json(directory / "scoring_identity.json")
+        where = f" in the {split} split" if split else ""
+        raise RuntimeError(f"no scores for {model}{where}; run python -m scoring score first")
+    # Count the extracted scenes of the same videos; scoring_identity.json only describes
+    # the last scoring call, which may have covered another split.
+    from scoring.steps import usable_scenes
+
+    stored = usable = 0
+    scene_dir = context.scene_dir(model)
+    for path in sorted(scene_dir.glob("*.jsonl")):
+        if selected is None or path.stem in selected:
+            graphs, count = usable_scenes(path)
+            stored, usable = stored + count, usable + len(graphs)
     summary = {
         "scored_scenes": len(rows),
-        "stored_scene_rows": identity["stored_scene_rows"],
-        "usable_scenes": identity["usable_scenes"],
+        "stored_scene_rows": stored,
+        "usable_scenes": usable,
         "units": {}, "per_video": {},
     }
     for unit in UNITS:
@@ -112,13 +134,14 @@ def _cell(interval, signed=False):
     return text
 
 
-def write_report(context, *, models):
-    log_step_start(context, "report", models=models, output_dir=context.reports_dir)
-    summaries = {model: model_summary(context, model) for model in models}
+def write_report(context, *, models, split=None):
+    log_step_start(context, "report", models=models, output_dir=context.reports_dir,
+                   **({"split": split} if split else {}))
+    summaries = {model: model_summary(context, model, split) for model in models}
     coverage_path = context.run_root / "scoring" / "coverage" / "summary.json"
     coverage = read_json(coverage_path) if coverage_path.is_file() else None
     lines = [
-        f"# d3 채점 보고서 ({context.run_id})", "",
+        f"# d3 채점 보고서 ({context.run_id}" + (f", {split}" if split else "") + ")", "",
         "장면 그래프를 주장 단위로 나눠 d3 Decision 모델이 키프레임과 대조한 결과입니다. "
         "점수는 주장이 맞을 확률의 평균이고, 하위 주장은 상위 주장의 점수를 곱해 반영했습니다. "
         "괄호는 영상 단위 bootstrap 95% 구간입니다(영상 2개 미만이면 생략).", "",
@@ -186,7 +209,7 @@ def write_report(context, *, models):
             lines.append(f"| {claim['content_id']} | {claim['scene_idx']} | {claim['kind']} | "
                          f"{text} | {claim['effective']:.3f} |")
         lines.append("")
-    name = "scoring_" + "__".join(models)
+    name = "scoring_" + "__".join(models) + (f"_{split}" if split else "")
     context.reports_dir.mkdir(parents=True, exist_ok=True)
     (context.reports_dir / f"{name}.md").write_text("\n".join(lines), encoding="utf-8")
     for summary in summaries.values():

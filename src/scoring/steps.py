@@ -12,12 +12,16 @@ from extraction.step_support import visual_rows
 from pipeline_logging import log_step_start
 from pipeline_runtime import scene_arm
 from scoring.claims import foil_claims, graph_claims
-from scoring.d3_workers import D3WorkerPool
+from scoring.d3_client import judge_name, open_judge
 from scoring.questions import STATE, claim_score, question, unit_scores
 from visual_sampling import timestamp_stem
 
 SCORING_VERSION = "d3-claims/v1"
-DEFAULTS = {"batch_size": 8, "foil_seed": 42, "foil_entities": 2, "foil_actions": 1}
+DEFAULTS = {
+    "batch_size": 8, "foil_seed": 42, "foil_entities": 2, "foil_actions": 1,
+    # --d3-server only: the model name sent to the server and the requests kept in flight
+    "server_model": "vllm-sr/d3-mini", "server_concurrency": 32,
+}
 
 
 def scoring_settings(context) -> dict:
@@ -53,11 +57,11 @@ def _stored_claim(claim: dict) -> dict:
     return {key: claim[key] for key in keep if key in claim}
 
 
-def score_graphs(context, *, model, split=None, limit=None, force=False):
+def score_graphs(context, *, model, split=None, limit=None, force=False, d3_server=None):
     settings = scoring_settings(context)
-    d3_path = context.model_path("d3")
+    judge = judge_name(context, settings, server=d3_server)
     output_dir = context.scoring_dir(model)
-    log_step_start(context, "score", model=model, d3=d3_path, output_dir=output_dir,
+    log_step_start(context, "score", model=model, d3=d3_server or judge, output_dir=output_dir,
                    force=force, **({"split": split} if split else {}),
                    **({"limit": limit} if limit else {}), **settings)
     scene_dir = context.scene_dir(model)
@@ -71,7 +75,7 @@ def score_graphs(context, *, model, split=None, limit=None, force=False):
     if not stored_rows:
         raise RuntimeError(f"no extracted scenes for {model}: {scene_dir}")
     identity = {
-        "version": SCORING_VERSION, "judge": str(d3_path), "state": STATE,
+        "version": SCORING_VERSION, "judge": judge, "state": STATE,
         "foils": {key: settings[key] for key in ("foil_seed", "foil_entities", "foil_actions")},
     }
     identity_hash = fingerprint_text(json.dumps(identity, sort_keys=True))
@@ -155,14 +159,14 @@ def score_graphs(context, *, model, split=None, limit=None, force=False):
 
         output_dir.mkdir(parents=True, exist_ok=True)
         if tasks:
-            with D3WorkerPool(d3_path, batch_size=settings["batch_size"], log=tqdm.write) as pool:
+            with open_judge(context, settings, server=d3_server, log=tqdm.write) as pool:
                 pool.run(tasks, receive)
     for cid in rows:
         if pending[cid] == 0:
             publish(cid)
     atomic_write_json(
         output_dir / "scoring_identity.json",
-        {**identity, "videos": len(visuals), "stored_scene_rows": stored_rows,
+        {**identity, "backend": d3_server or "in-process", "videos": len(visuals), "stored_scene_rows": stored_rows,
          "usable_scenes": sum(len(v) for v in graphs.values()),
          "scored_scenes": sum(len(v) for v in rows.values()), "reused_scenes": reused},
         durable=True,

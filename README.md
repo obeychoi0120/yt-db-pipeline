@@ -50,6 +50,7 @@ cp config.example.yaml config.yaml
 export PYTHONPATH=src
 RUN_ID=R01_v8_2
 PROMPT=prompts/scene_graph_v8_2.md
+D3="--d3-server http://localhost:8899"   # 서버 없이 GPU마다 d3를 올리려면 D3=""
 
 # 1. Preparation (Run과 무관하게 한 번)
 python -m preparation create-manifest
@@ -57,15 +58,15 @@ python -m preparation make-split
 python -m preparation download-videos
 python -m preparation extract-keyframes
 
-# 2. Extraction
+# 2. Extraction: 교사는 전체, 학생은 val (프롬프트 개선용)
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemini
-python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b --split test
+python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b --split val
 
-# 3. Scoring
-python -m scoring score --run-id $RUN_ID --model gemini
-python -m scoring score --run-id $RUN_ID --model gemma4_e2b
-python -m scoring coverage --run-id $RUN_ID --models gemini gemma4_e2b
-python -m scoring report --run-id $RUN_ID --models gemini gemma4_e2b
+# 3. Scoring: 교사는 전체(5단계 점수 필터에 필요), 비교와 보고서는 val
+python -m scoring score --run-id $RUN_ID --model gemini $D3
+python -m scoring score --run-id $RUN_ID --model gemma4_e2b --split val $D3
+python -m scoring coverage --run-id $RUN_ID --models gemini gemma4_e2b --split val $D3
+python -m scoring report --run-id $RUN_ID --models gemini gemma4_e2b --split val
 
 # 5. LoRA
 python -m finetuning build-dataset --run-id $RUN_ID --schema $PROMPT --min-scene-score 0.7
@@ -77,15 +78,20 @@ bash src/finetuning/train_lora.sh --model /path/to/gemma4_e2b_view \
 python -m finetuning merge --training-dir artifacts/runs/$RUN_ID/lora --output /path/to/gemma4_e2b_lora
 conda activate vc_cloud
 
-# 6. 평가: config.yaml의 models에 gemma4_e2b_lora(backend: vllm, 병합 모델 path)를 추가한 뒤
+# 6. 최종 평가 (test): config.yaml의 models에 gemma4_e2b_lora(backend: vllm, 병합 모델 path)를 추가한 뒤
+python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b --split test
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b_lora --split test
-python -m scoring score --run-id $RUN_ID --model gemma4_e2b_lora --split test
+python -m scoring score --run-id $RUN_ID --model gemma4_e2b --split test $D3
+python -m scoring score --run-id $RUN_ID --model gemma4_e2b_lora --split test $D3
 python -m evaluation compare --run-id $RUN_ID --students gemma4_e2b gemma4_e2b_lora --split test
 ```
 
 - 모든 단계는 다시 실행하면 끝난 부분을 건너뜁니다. 처음부터 다시 하려면 `--force`를 씁니다.
 - `--split train|val|test`와 `--limit N`으로 대상 영상을 줄일 수 있습니다. 키프레임이 준비되지 않은 영상은 건너뜁니다.
 - `splits.csv`가 있으면 기존 배정은 바뀌지 않고 새 영상만 배정됩니다.
+- 분할은 용도를 나눠 씁니다. val은 프롬프트 개선, train·val은 LoRA 학습, test는 최종 평가에만 씁니다. 프롬프트를 고칠 때 test 결과를 보지 않습니다.
+- `$D3`는 d3 채점 방식입니다. `D3="--d3-server http://localhost:8899"`이면 vLLM Semantic Router 서버에 질문을 보내고, `D3=""`이면 GPU마다 d3를 직접 올립니다. 서버는 다른 터미널에서 먼저 띄웁니다: `vllm-sr serve vllm-sr/d3-mini -e -dp 4 --device-ids 0,1,2,3 --startup-timeout 7200`. 같은 d3 가중치이므로 두 방식은 채점 결과를 서로 재사용합니다(서버의 요청 배치로 확률이 거의 같은 판정 일부가 바뀔 수 있습니다).
+- `scoring report`와 `evaluation compare`의 `--split`은 그 분할의 영상만 집계합니다. 빼면 채점한 장면 전체를 합칩니다.
 
 ## 산출물
 
