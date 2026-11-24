@@ -20,7 +20,11 @@ from pathlib import Path
 
 SYSTEM_ONE_PATH = "/v1/systemone"
 # Busy replies are retried: vllm-sr answers 529 when overloaded and 503 while starting.
-RETRY_STATUSES = {429, 502, 503, 504, 529}
+# A 504 already waited the whole deadline and is not retried; rerunning scores the scene.
+RETRY_STATUSES = {429, 502, 503, 529}
+# vllm-sr gives up on a request after 30 s unless options.deadline_ms says otherwise; queued
+# behind many scenes, a request needs longer. 600000 ms is the listener's default maximum.
+DEADLINE_MS = 600_000
 MAX_RETRIES = 8
 
 
@@ -40,12 +44,14 @@ def placed_request(model: str, state, questions: dict, images=None) -> dict:
 
 
 class D3ServerPool:
-    def __init__(self, url: str, *, model: str, concurrency: int = 32, timeout: float = 600,
-                 log=print):
+    def __init__(self, url: str, *, model: str, concurrency: int = 32,
+                 deadline_ms: int = DEADLINE_MS, log=print):
         self.url = url.rstrip("/") + SYSTEM_ONE_PATH
         self.model = model
         self.concurrency = max(1, int(concurrency))
-        self.timeout = timeout
+        self.deadline_ms = int(deadline_ms)
+        # Wait a little past the server's deadline so its 504 arrives instead of a socket timeout.
+        self.timeout = self.deadline_ms / 1000 + 30
         self._log = log
         # The server is local or on the intranet: never send it through HTTP(S)_PROXY.
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -60,6 +66,7 @@ class D3ServerPool:
 
     def _ask(self, task: dict) -> dict:
         payload = placed_request(self.model, task["state"], task["questions"], task.get("images"))
+        payload["options"] = {"deadline_ms": self.deadline_ms}
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         delay = 1.0
         for attempt in range(MAX_RETRIES + 1):
