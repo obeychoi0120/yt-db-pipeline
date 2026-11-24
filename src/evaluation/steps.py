@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from artifact_io import atomic_write_json, read_json
-from evaluation.agreement import compare_graphs, empty_agreement
+from evaluation.agreement import (
+    LABELS, OUTSIDE, compare_graphs, empty_agreement, label_metrics,
+)
 from extraction.step_support import visual_rows
 from pipeline_logging import log_step_start
-from scoring.claims import UNITS
+from scoring.claims import FORMATS, MEDIA, UNITS
 from scoring.report import bootstrap_interval, model_summary, video_means
 from scoring.steps import usable_scenes
 
 DEFAULTS = {"match_threshold": 0.8}
+ALLOWED = {"medium": MEDIA, "format": FORMATS}
 FIELDS = (
     ("medium", "medium 일치", lambda r: r["medium"]),
     ("format", "format 일치", lambda r: r["format"]),
@@ -32,6 +35,49 @@ def _cell(interval):
     return text
 
 
+def _number(value):
+    return "–" if value is None else f"{value:.3f}"
+
+
+def label_section(teacher, students, agreement, *, confusions=5) -> list[str]:
+    """medium·format accuracy against the teacher, scene by scene, with per-label scores."""
+    lines = [
+        "## medium·format 정확도", "",
+        "교사의 값을 정답으로 본 장면 단위 값입니다. 학생 그래프가 없는 장면은 오답으로 셉니다. "
+        "정확도는 값이 그대로 같은 비율입니다. 값별 F1과 macro-F1은 프롬프트 목록의 값으로 계산하며, "
+        f"목록에 없는 값은 `{OUTSIDE}` 한 줄로 묶고 macro-F1에서 뺍니다.", "",
+        "| 모델 | 장면 | " + " | ".join(f"{f} 정확도 | {f} macro-F1" for f in LABELS) + " |",
+        "| --- | --- | " + " | ".join("--- | ---" for _ in LABELS) + " |",
+    ]
+    for model in students:
+        items = agreement[model]["labels"]
+        lines.append(f"| {model} | {items[LABELS[0]]['scenes']} | " + " | ".join(
+            f"{_number(items[f]['accuracy'])} | {_number(items[f]['macro_f1'])}" for f in LABELS
+        ) + " |")
+    lines.append("")
+    for field in LABELS:
+        lines += [f"### {field} 값별 F1", "",
+                  "| 값 | 교사 장면 | " + " | ".join(students) + " |",
+                  "| --- | --- | " + " | ".join("---" for _ in students) + " |"]
+        used = {label for model in [teacher, *students]
+                for label in agreement[model]["labels"][field]["labels"]}
+        names = [label for label in ALLOWED[field] if label in used]
+        names += [OUTSIDE] if OUTSIDE in used else []
+        reference = agreement[teacher]["labels"][field]["labels"]
+        for label in names:
+            cells = [agreement[m]["labels"][field]["labels"].get(label) for m in students]
+            lines.append(f"| {label} | {reference.get(label, {}).get('support', 0)} | "
+                         + " | ".join("–" if c is None else f"{c['f1']:.3f}" for c in cells) + " |")
+        lines.append("")
+        for model in students:
+            top = agreement[model]["labels"][field]["confusions"][:confusions]
+            if top:
+                lines.append(f"`{model}`의 잦은 {field} 오답 (교사 → 학생): " + ", ".join(
+                    f"{c['teacher']} → {c['student']} {c['count']}" for c in top))
+        lines.append("")
+    return lines
+
+
 def health(context, model) -> dict | None:
     path = context.scene_dir(model) / "generation_stats.json"
     return read_json(path) if path.is_file() else None
@@ -51,7 +97,7 @@ def compare(context, *, teacher, students, split=None, limit=None, encoder=None)
     models = [teacher, *students]
     agreement = {}
     for student in models:  # the teacher against itself checks the measure (must be 1)
-        rows = []
+        rows, labels = [], {field: [] for field in LABELS}
         for visual in visuals:
             cid = visual["content_id"]
             reference, _ = usable_scenes(context.scene_dir(teacher) / f"{cid}.jsonl")
@@ -60,12 +106,16 @@ def compare(context, *, teacher, students, split=None, limit=None, encoder=None)
                 row = (compare_graphs(graphs[scene_idx], graph, encoder.encode, threshold=threshold)
                        if scene_idx in graphs else empty_agreement(graph))
                 rows.append({"content_id": cid, "scene_idx": scene_idx, **row})
+                for field in LABELS:
+                    labels[field].append((graph[field], graphs[scene_idx][field]
+                                          if scene_idx in graphs else None))
         if not rows:
             raise RuntimeError(f"no teacher scenes to compare for {teacher}")
         agreement[student] = {
             "scenes": len(rows), "missing": sum(bool(row.get("missing")) for row in rows),
             "fields": {key: bootstrap_interval(video_means(rows, value).values())
                        for key, _, value in FIELDS},
+            "labels": {field: label_metrics(pairs, ALLOWED[field]) for field, pairs in labels.items()},
         }
     lines = [
         f"# LoRA 평가 보고서 ({context.run_id})", "",
@@ -82,8 +132,9 @@ def compare(context, *, teacher, students, split=None, limit=None, encoder=None)
         item = agreement[model]
         lines.append(f"| {model} | {item['scenes']} | {item['missing']} | "
                      + " | ".join(_cell(item["fields"][key]) for key, _, _ in FIELDS) + " |")
-    lines += ["", f"`{teacher}` 행은 교사를 자기 자신과 비교한 값으로, 측정이 맞게 동작하면 모두 1입니다.", "",
-              "## 형식 건전성", "",
+    lines += ["", f"`{teacher}` 행은 교사를 자기 자신과 비교한 값으로, 측정이 맞게 동작하면 모두 1입니다.", ""]
+    lines += label_section(teacher, students, agreement)
+    lines += ["## 형식 건전성", "",
               "| 모델 | 전체 | 성공 | 반복 중단 | 파싱 실패 | 토큰 한도 | 오류 |",
               "| --- | --- | --- | --- | --- | --- | --- |"]
     stats = {model: health(context, model) for model in models}

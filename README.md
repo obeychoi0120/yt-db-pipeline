@@ -92,6 +92,7 @@ python -m evaluation compare --run-id $RUN_ID --students gemma4_e2b gemma4_e2b_l
 - 분할은 용도를 나눠 씁니다. val은 프롬프트 개선, train·val은 LoRA 학습, test는 최종 평가에만 씁니다. 프롬프트를 고칠 때 test 결과를 보지 않습니다.
 - `$D3`는 d3 채점 방식입니다. `D3="--d3-server http://localhost:8899"`이면 vLLM Semantic Router 서버에 질문을 보내고, `D3=""`이면 GPU마다 d3를 직접 올립니다. 서버는 다른 터미널에서 먼저 띄웁니다: `vllm-sr serve vllm-sr/d3-mini -e -dp 4 --device-ids 0,1,2,3 --startup-timeout 7200`. 같은 d3 가중치이므로 두 방식은 채점 결과를 서로 재사용합니다(서버의 요청 배치로 확률이 거의 같은 판정 일부가 바뀔 수 있습니다).
 - `scoring report`와 `evaluation compare`의 `--split`은 그 분할의 영상만 집계합니다. 빼면 채점한 장면 전체를 합칩니다.
+- `evaluation compare` 보고서의 "medium·format 정확도"는 교사의 medium·format을 정답으로 본 장면 단위 정확도와 macro-F1, 값별 F1, 자주 틀리는 조합(교사 → 학생)입니다. 정확도는 값이 그대로 같은 비율이고, 값별 F1과 macro-F1은 프롬프트 목록의 값으로만 계산합니다(목록 밖의 값은 `(목록 밖)` 한 줄로 묶음). 학생 그래프가 없는 장면은 오답으로 셉니다. "교사 일치도" 표의 medium·format 일치는 같은 값을 영상별로 평균한 것입니다.
 
 ## 산출물
 

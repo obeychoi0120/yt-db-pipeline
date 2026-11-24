@@ -93,3 +93,43 @@ def empty_agreement(teacher: dict) -> dict:
         "actions": zero(len(teacher["actions"])), "roles": {"agreement": None, "links": 0},
         "missing": True,
     }
+
+
+LABELS = ("medium", "format")
+MISSING = "(none)"
+OUTSIDE = "(목록 밖)"
+
+
+def label_metrics(pairs, allowed=None) -> dict:
+    """Accuracy, macro-F1 and per-label scores of (teacher, student) labels over scenes.
+
+    Accuracy compares the raw values. A scene without a usable student graph has student
+    None and counts as wrong. Per-label scores group values outside `allowed` (the prompt's
+    list) into OUTSIDE, and macro-F1 averages only the allowed labels that occur.
+    """
+    pairs = [(teacher, MISSING if student is None else student) for teacher, student in pairs]
+    if not pairs:
+        return {"scenes": 0, "accuracy": None, "macro_f1": None, "labels": {}, "confusions": []}
+    bucket = (lambda v: v) if allowed is None else (
+        lambda v: v if v in allowed or v == MISSING else OUTSIDE)
+    grouped = [(bucket(t), bucket(s)) for t, s in pairs]
+    labels = sorted({t for t, _ in grouped} | {s for _, s in grouped if s != MISSING})
+    per_label = {}
+    for label in labels:
+        hit = sum(t == s == label for t, s in grouped)
+        predicted = sum(s == label for _, s in grouped)
+        support = sum(t == label for t, _ in grouped)
+        per_label[label] = {**_prf(hit, predicted, support), "support": support}
+    averaged = [item["f1"] for label, item in per_label.items() if label != OUTSIDE]
+    confusions: dict[tuple[str, str], int] = {}
+    for teacher, student in pairs:
+        if teacher != student:
+            confusions[(teacher, student)] = confusions.get((teacher, student), 0) + 1
+    return {
+        "scenes": len(pairs),
+        "accuracy": sum(t == s for t, s in pairs) / len(pairs),
+        "macro_f1": sum(averaged) / len(averaged) if averaged else None,
+        "labels": per_label,
+        "confusions": [{"teacher": t, "student": s, "count": n}
+                       for (t, s), n in sorted(confusions.items(), key=lambda kv: (-kv[1], kv[0]))],
+    }

@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 
-from evaluation.agreement import compare_graphs, empty_agreement, match_items
+from evaluation.agreement import compare_graphs, empty_agreement, label_metrics, match_items
 from extraction.semantic_graph import parse_or_repair_graph
 from extraction.semantic_graph.serialize import prompt_form, serialize_graph
 from finetuning.dataset import build_record, scene_score
@@ -116,6 +116,22 @@ def test_agreement_is_one_for_identical_graphs_and_zero_when_missing():
     assert changed["entities"]["matched"] == 2
     assert changed["roles"]["agreement"] < 1.0
     assert empty_agreement(ID_GRAPH)["entities"]["recall"] == 0.0
+
+
+def test_label_metrics_counts_missing_scenes_as_wrong():
+    metrics = label_metrics([("vlog", "vlog"), ("vlog", "interview"), ("news", "news"), ("news", None)])
+    assert metrics["accuracy"] == 0.5
+    assert metrics["labels"]["vlog"]["recall"] == 0.5
+    assert metrics["labels"]["news"]["precision"] == 1.0
+    assert metrics["labels"]["interview"]["f1"] == 0.0
+    assert "(none)" not in metrics["labels"]
+    assert metrics["macro_f1"] == pytest.approx((2 / 3 + 2 / 3 + 0.0) / 3)
+    assert {"teacher": "news", "student": "(none)", "count": 1} in metrics["confusions"]
+    assert label_metrics([])["accuracy"] is None
+    listed = label_metrics([("news", "news"), ("vlog", "travelogue")], allowed={"news": ""})
+    assert listed["accuracy"] == 0.5
+    assert set(listed["labels"]) == {"news", "(목록 밖)"}
+    assert listed["macro_f1"] == 1.0
 
 
 def test_match_items_is_one_to_one():
