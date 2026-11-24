@@ -137,3 +137,28 @@ def test_bootstrap_interval_contains_the_mean():
     interval = bootstrap_interval([0.2, 0.4, 0.6, 0.8])
     assert interval["low"] <= interval["mean"] <= interval["high"] and interval["videos"] == 4
     assert bootstrap_interval([0.5])["low"] is None
+
+
+def test_saved_scores_match_only_an_unchanged_graph():
+    from scoring.steps import _claim_keys
+
+    claim = {"id": "entity:e1", "unit": "entity", "kind": "entity", "value": "a dog"}
+    saved = [{**claim, "p": 0.9, "effective": 0.9}]
+    assert _claim_keys(saved) == _claim_keys([claim])
+    assert _claim_keys(saved) != _claim_keys([{**claim, "value": "a cat"}])
+
+
+def test_changed_settings_remove_old_scores(tmp_path):
+    import json
+
+    from scoring.steps import _drop_stale_scores
+
+    identity = {"version": 1, "judge": "d3", "state": "s", "foils": {"foil_seed": 42}}
+    (tmp_path / "scoring_identity.json").write_text(json.dumps({**identity, "backend": "x"}))
+    (tmp_path / "a.jsonl").write_text("{}\n")
+    _drop_stale_scores(tmp_path, identity)
+    assert (tmp_path / "a.jsonl").exists()
+
+    _drop_stale_scores(tmp_path, {**identity, "foils": {"foil_seed": 7}})
+    assert not (tmp_path / "a.jsonl").exists()
+    assert not (tmp_path / "scoring_identity.json").exists()

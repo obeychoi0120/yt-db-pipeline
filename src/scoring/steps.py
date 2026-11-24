@@ -5,8 +5,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from artifact_io import atomic_write_json, atomic_write_jsonl, read_jsonl
-from artifact_io import fingerprint_text
+from artifact_io import atomic_write_json, atomic_write_jsonl, read_json, read_jsonl
 from extraction.graph_warnings import blocking_tags
 from extraction.step_support import visual_rows
 from pipeline_logging import log_step_start
@@ -51,10 +50,34 @@ def keyframe_paths(visual: dict) -> dict[int, list[str]]:
     }
 
 
+CLAIM_FIELDS = ("id", "unit", "kind", "value", "value_name", "parent", "entity", "actor", "action")
+SCORE_FIELDS = ("p", "abstain", "judge_choice", "effective", "note")
+IDENTITY_KEYS = ("version", "judge", "state", "foils")
+
+
 def _stored_claim(claim: dict) -> dict:
-    keep = ("id", "unit", "kind", "value", "value_name", "parent", "entity", "actor", "action",
-            "p", "abstain", "judge_choice", "effective", "note")
-    return {key: claim[key] for key in keep if key in claim}
+    return {key: claim[key] for key in (*CLAIM_FIELDS, *SCORE_FIELDS) if key in claim}
+
+
+def _claim_keys(claims) -> list[dict]:
+    """The claims without their scores: equal when the scene graph is unchanged."""
+    return [{key: claim[key] for key in CLAIM_FIELDS if key in claim} for claim in claims]
+
+
+def _drop_stale_scores(output_dir, identity: dict) -> None:
+    """Scores made with other settings (judge, state, foils) are deleted before scoring."""
+    path = output_dir / "scoring_identity.json"
+    if not path.is_file():
+        return
+    saved = read_json(path)
+    if all(saved.get(key) == identity[key] for key in IDENTITY_KEYS):
+        return
+    stale = sorted(output_dir.glob("*.jsonl"))
+    print(f"[SCORE] scoring settings changed; removing {len(stale)} score files in {output_dir}",
+          flush=True)
+    for old in stale:
+        old.unlink()
+    path.unlink()
 
 
 def score_graphs(context, *, model, split=None, limit=None, force=False, d3_server=None):
@@ -78,7 +101,7 @@ def score_graphs(context, *, model, split=None, limit=None, force=False, d3_serv
         "version": SCORING_VERSION, "judge": judge, "state": STATE,
         "foils": {key: settings[key] for key in ("foil_seed", "foil_entities", "foil_actions")},
     }
-    identity_hash = fingerprint_text(json.dumps(identity, sort_keys=True))
+    _drop_stale_scores(output_dir, identity)
     # Names and phrases of every other video are the foil pool of one video.
     vocabulary = {
         cid: {
@@ -101,12 +124,12 @@ def score_graphs(context, *, model, split=None, limit=None, force=False, d3_serv
         frames = keyframe_paths(visual) if graphs[cid] else {}
         rows[cid], pending[cid] = [], 0
         for scene_idx, graph in sorted(graphs[cid].items()):
-            graph_hash = fingerprint_text(json.dumps([graph, identity_hash], sort_keys=True))
+            claims = graph_claims(graph)
             saved = cached.get(scene_idx)
-            if saved and saved.get("graph_hash") == graph_hash:
+            if saved and _claim_keys(saved["claims"]) == _claim_keys(claims):
+                saved.pop("graph_hash", None)
                 rows[cid].append(saved)
                 continue
-            claims = graph_claims(graph)
             foils = foil_claims(
                 graph, pool, seed=f"{settings['foil_seed']}:{cid}:{scene_idx}",
                 entities=settings["foil_entities"], actions=settings["foil_actions"],
@@ -118,7 +141,7 @@ def score_graphs(context, *, model, split=None, limit=None, force=False, d3_serv
             tasks.append({
                 "task_id": f"{cid}:{scene_idx}", "state": STATE, "images": frames[scene_idx],
                 "questions": questions,
-                "_meta": (cid, scene_idx, graph_hash, claims, foils),
+                "_meta": (cid, scene_idx, claims, foils),
             })
     meta = {task["task_id"]: task.pop("_meta") for task in tasks}
     reused = sum(len(v) for v in rows.values())
@@ -138,7 +161,7 @@ def score_graphs(context, *, model, split=None, limit=None, force=False, d3_serv
 
         def receive(event):
             nonlocal failures
-            cid, scene_idx, graph_hash, claims, foils = meta[event["task_id"]]
+            cid, scene_idx, claims, foils = meta[event["task_id"]]
             if "error" in event:
                 failures += 1
                 tqdm.write(f"[d3] {event['task_id']} failed: {event['error']}")
@@ -146,7 +169,7 @@ def score_graphs(context, *, model, split=None, limit=None, force=False, d3_serv
                 for claim in [*claims, *foils]:
                     claim.update(claim_score(claim, event["answers"].get(claim["id"])))
                 rows[cid].append({
-                    "content_id": cid, "scene_idx": scene_idx, "graph_hash": graph_hash,
+                    "content_id": cid, "scene_idx": scene_idx,
                     "scores": unit_scores(claims),
                     "claims": [_stored_claim(claim) for claim in claims],
                     "foils": [_stored_claim(claim) for claim in foils],
