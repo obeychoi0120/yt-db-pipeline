@@ -122,6 +122,96 @@ artifacts/runs/<RUN_ID>/reports/*.md
 - 다른 영상에서 가져온 미끼 엔티티(장면당 1개)로 Judge의 오탐률을 함께 잽니다.
 - 재현율은 비교한 모델들의 검증된 주장을 모은 합집합을 기준으로 합니다. 사람이 만든 정답이 아닙니다.
 
+## d3에게 주는 질문
+
+질문 문장은 [questions.py](src/scoring/questions.py), 주장을 나누는 방식은 [claims.py](src/scoring/claims.py)에 있습니다. 질문 문장이나 선택지를 바꾸면 이 절도 함께 고쳐 주세요.
+
+### 한 장면의 요청
+
+장면 하나가 d3 요청 하나입니다. 요청에는 키프레임 6장, 아래 상태 문장, 그 장면의 질문 전부가 들어갑니다. d3는 질문마다 키프레임과 상태 문장을 함께 읽고, 선택지마다 확률을 돌려줍니다.
+
+```text
+The images are chronological keyframes sampled from one 30-second segment of a video. Judge only what is visible in these keyframes.
+```
+
+### 질문 종류
+
+| 질문 | 개수 | 문장 | 선택지 | 점수 |
+| --- | --- | --- | --- | --- |
+| medium | 1 | `What is the medium of this segment?` | `live_action`, `animation`, `gameplay`, `screen_recording`, `mixed`, `unknown` | 그래프가 고른 값의 확률 |
+| format | 1 | `What is the presentation format of this segment?` | `demonstration`, `explanation`, `review`, `narrative`, `highlights`, `performance`, `interview`, `other`, `unknown` | 그래프가 고른 값의 확률 |
+| topic | topic마다 | `How central is this topic to the segment: "{topic}"?` | 3단계 척도: `Not shown in the segment` / `Shown but incidental` / `A main subject of the segment` | 기대값 ÷ 2 (0, 0.5, 1) |
+| 엔티티 | 엔티티마다 | 속성이 없으면 `Is this visible in at least one keyframe: {이름}?`<br>속성이 있으면 `Is this visible in at least one keyframe, matching the whole description: {이름} ({속성}; {속성})?` | 판정 3개 | `supported` 확률 |
+| 행동 | 행동마다 | 아래 여러 줄 문장 | 판정 3개 | `supported` 확률 × actor 엔티티 점수 |
+| 미끼 엔티티 | 장면당 1 | 엔티티 질문과 같은 문장. 이름은 다른 영상의 엔티티에서 뽑음 | 판정 3개 | 점수에 넣지 않고 오탐률로만 집계 |
+
+행동 질문은 그래프가 엔티티를 지정한 역할만 줄로 붙입니다. 역할이 `none`이거나 `unknown`이면 그 줄을 넣지 않습니다.
+
+```text
+Do the keyframes show this action with every listed detail correct?
+Actor: {actor 이름 (속성; 속성)}
+Action: "{행동}"
+Acted on: {target}
+Tool or means: {tool}
+Place: {place}
+```
+
+**판정 3개**는 엔티티, 행동, 미끼 질문에서 같습니다.
+
+| 키 | 선택지 설명 |
+| --- | --- |
+| `supported` | `Yes, the keyframes show this` |
+| `contradicted` | `No, the keyframes show this is wrong or absent` |
+| `cannot_tell` | `The keyframes do not show enough to decide` |
+
+- 점수는 `supported` 확률을 씁니다. `cannot_tell` 확률은 기권 확률로 따로 보고합니다.
+- medium과 format의 선택지에는 각 값의 설명(예: `live_action`: `Real people, objects or places filmed with a camera`)이 함께 들어갑니다. 설명 문장은 [claims.py](src/scoring/claims.py)의 `MEDIA`, `FORMATS`에 있습니다.
+- medium이나 format이 목록에 없는 값이면 질문하지 않고 0점을 줍니다.
+- 엔티티와 actor는 `이름 (속성; 속성)` 형식으로 적어 같은 이름의 엔티티를 구분합니다.
+
+### 예시
+
+아래 그래프 하나에서 질문 10개가 만들어집니다(그래프 주장 9개 + 미끼 1개).
+
+```text
+[Context]
+medium: live_action
+format: demonstration
+topics: salmon sashimi; knife work
+[Entities]
+actor_1: woman; striped apron
+target_1: salmon fillet; raw
+tool_1: long knife
+[Actions]
+actor_1 - slicing thinly - target_1; tool_1; unknown
+actor_1 - plating - target_1; none; unknown
+```
+
+| 주장 ID | 질문 |
+| --- | --- |
+| `medium` | `What is the medium of this segment?` (정답 후보 `live_action`) |
+| `format` | `What is the presentation format of this segment?` (정답 후보 `demonstration`) |
+| `topic:0` | `How central is this topic to the segment: "salmon sashimi"?` |
+| `topic:1` | `How central is this topic to the segment: "knife work"?` |
+| `entity:actor_1` | `Is this visible in at least one keyframe, matching the whole description: woman (striped apron)?` |
+| `entity:target_1` | `Is this visible in at least one keyframe, matching the whole description: salmon fillet (raw)?` |
+| `entity:tool_1` | `Is this visible in at least one keyframe: long knife?` |
+| `action:0` | `Do the keyframes show this action with every listed detail correct?`<br>`Actor: woman (striped apron)`<br>`Action: "slicing thinly"`<br>`Acted on: salmon fillet (raw)`<br>`Tool or means: long knife` |
+| `action:1` | `Do the keyframes show this action with every listed detail correct?`<br>`Actor: woman (striped apron)`<br>`Action: "plating"`<br>`Acted on: salmon fillet (raw)` |
+| `foil:entity:0` | `Is this visible in at least one keyframe: elephant?` (다른 영상에서 뽑은 이름) |
+
+`action:0`의 place는 `unknown`, `action:1`의 tool은 `none`이라 해당 줄이 빠졌습니다.
+
+### 재현율 질문 (`scoring coverage`)
+
+재현율은 키프레임을 쓰지 않습니다. 대상 모델의 그래프를 텍스트로 상태에 넣고, 기준 항목마다 질문합니다.
+
+- 상태: `This is a scene graph extracted from one 30-second video segment:` 다음 줄부터 그래프 텍스트(ID 형식)
+- 질문: `Does the graph include {항목}? Count the same thing worded differently as included.`
+  - `{항목}`은 `the entity: {이름}`, `the topic: {topic}`, `the action: {actor 이름} {행동}` 중 하나입니다.
+- 선택지: `covered` (`Yes, the graph contains it or a clear equivalent`) / `missing` (`No, the graph does not contain it`)
+- 점수: `covered` 확률
+
 ## 프롬프트
 
 파서는 [scene_graph_v8_2.md](prompts/scene_graph_v8_2.md)(ID 형식)와 [scene_graph_v9_base.md](prompts/scene_graph_v9_base.md)(이름 형식)를 기준으로 합니다. 프롬프트를 바꾸면 [prompts/update_note.md](prompts/update_note.md)를 함께 갱신합니다. 학습과 추론은 같은 프롬프트와 같은 `max_soft_tokens`를 써야 하므로, `build-dataset`은 교사 추출에 쓴 프롬프트와 다르면 중단합니다.
