@@ -67,7 +67,8 @@ def extract_keyframes(context, content_ids, *, force=False, workers=4) -> dict:
 
     totals = {"videos": 0, "scenes": 0, "keyframes": 0, "new_frames": 0, "missing_video": 0}
     failures = []
-    bar = tqdm(total=len(content_ids), desc="keyframes", unit="video", dynamic_ncols=True)
+    bar = tqdm(total=len(content_ids), desc="keyframes", unit="video", dynamic_ncols=True,
+               smoothing=0)  # ETA from the whole-run average
     with bar, ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(prepare, content_id) for content_id in content_ids]
         for future in as_completed(futures):

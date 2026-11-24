@@ -158,7 +158,8 @@ def score_graphs(context, *, model, split=None, limit=None, force=False, d3_serv
             target.unlink(missing_ok=True)
 
     failures = 0
-    with tqdm(total=len(tasks), desc=f"score {scene_arm(model)}", unit="scene") as bar:
+    with tqdm(total=len(tasks), desc=f"score {scene_arm(model)}", unit="scene",
+              smoothing=0, dynamic_ncols=True) as bar:  # ETA from the whole-run average
 
         def receive(event):
             nonlocal failures

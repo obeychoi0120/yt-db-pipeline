@@ -86,7 +86,8 @@ def coverage(context, *, models, split=None, limit=None, threshold=None, d3_serv
                     })
     owners = {task["task_id"]: task.pop("_row") for task in tasks}
     failures = 0
-    with tqdm(total=len(tasks), desc="coverage", unit="scene") as bar:
+    with tqdm(total=len(tasks), desc="coverage", unit="scene", smoothing=0,
+              dynamic_ncols=True) as bar:
 
         def receive(event):
             nonlocal failures
