@@ -1,11 +1,12 @@
 # Preparation and extraction: yt-dlp download, keyframes, Gemini (Vertex AI) and local vLLM.
 #
 # Confirmed combination (conda env vc_cloud, Python 3.12, CUDA 13.0):
-#   torch 2.13.0+cu130, transformers 5.19.0, vllm 0.32.0, yt-dlp 2026.10.26, google-genai 2.23.0
+#   torch 2.13.0+cu130, transformers 5.19.0, vllm 0.32.0, yt-dlp 2026.10.26, google-genai 3.6.1
 # Install the torch build that matches your CUDA driver first if pip picks the wrong one.
 #
 # System tools (not pip): ffmpeg and ffprobe must be on PATH.
 # Gemini: authenticate with `gcloud auth application-default login`.
+# extract-iab-gt: the Decisions API needs a Gemini API key (extraction.iab.api_key).
 
 numpy
 Pillow
@@ -15,4 +16,4 @@ yt-dlp
 torch
 transformers>=5.19.0
 vllm>=0.32.0; sys_platform == "linux"
-google-genai
+google-genai>=3.6

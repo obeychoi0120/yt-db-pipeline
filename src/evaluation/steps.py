@@ -92,7 +92,7 @@ def compare(context, *, teacher, students, split=None, limit=None, encoder=None)
     if encoder is None:
         from evaluation.encoder import TextEncoder
 
-        encoder = TextEncoder(context.model_path("bge"))
+        encoder = TextEncoder(context.step_path("evaluation", "bge_path"))
     visuals = visual_rows(context, split=split, limit=limit)
     models = [teacher, *students]
     agreement = {}

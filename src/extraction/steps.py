@@ -6,6 +6,7 @@ from extraction.backends import GeminiWorkerPool
 from extraction.generation import vllm_generator
 from extraction.generation_config import generation_settings, penalty_schedule, vllm_settings
 from extraction.graph_warnings import OUTCOMES, needs_generation, outcome
+from extraction.iab import extract_iab_gt
 from extraction.progress import InferenceProgress
 from extraction.scene_executor import run_gemini_scenes, run_vllm_scenes
 from extraction.scene_storage import (
@@ -16,6 +17,11 @@ from extraction.semantic_graph.parser import GRAPH_PARSER_VERSION
 from extraction.step_support import result, scene_generation_rows, visual_rows
 from pipeline_logging import log_step_start
 from pipeline_runtime import scene_arm
+
+# Model entry keys that are not part of the recorded model identity: how requests are sent, and
+# the output limit that the generation settings record on their own.
+RUNTIME_KEYS = ("backend", "threads", "scene_max_new_tokens")
+GEMINI_THREADS = 32
 
 
 def engine_settings(context, model):
@@ -57,7 +63,8 @@ def prompt_provenance(
     else:
         settings["backend"] = "gemini"
         model_identity = {
-            key: value for key, value in context.model_settings(model).items() if key != "backend"
+            key: value for key, value in context.model_settings(model).items()
+            if key not in RUNTIME_KEYS
         }
     settings["visual_evidence"] = dict(extraction["visual_evidence"])
     settings["response_parser"] = GRAPH_PARSER_VERSION
@@ -185,11 +192,11 @@ def extract_graph_scenes(
                 penalties=penalties,
             )
         else:
+            model_settings = context.model_settings(model)
             gemini = {
-                key: value for key, value in context.model_settings(model).items()
-                if key != "backend"
+                key: value for key, value in model_settings.items() if key not in RUNTIME_KEYS
             }
-            pool = GeminiWorkerPool(settings["gemini"]["threads"], **gemini)
+            pool = GeminiWorkerPool(model_settings.get("threads", GEMINI_THREADS), **gemini)
             run_gemini_scenes(
                 pending_contents(),
                 provenance=provenance,
@@ -210,4 +217,5 @@ def extract_graph_scenes(
 
 STEP_HANDLERS = {
     "extract-graph-scenes": extract_graph_scenes,
+    "extract-iab-gt": extract_iab_gt,
 }

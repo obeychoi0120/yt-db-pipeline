@@ -20,9 +20,10 @@ conda install -c conda-forge ffmpeg -y
 pip install -r requirements-scoring.txt   # requirements-main.txt 포함
 ```
 
-- 확인한 조합: torch 2.13.0+cu130, transformers 5.19.0, vllm 0.32.0, yt-dlp 2026.10.26, google-genai 2.23.0, accelerate 1.16.0.
+- 확인한 조합: torch 2.13.0+cu130, transformers 5.19.0, vllm 0.32.0, yt-dlp 2026.10.26, google-genai 3.6.1, accelerate 1.16.0.
 - LoRA 학습은 별도 환경에 [requirements-finetune.txt](requirements-finetune.txt)를 설치해 실행합니다.
 - Gemini는 `gcloud auth application-default login`으로 인증합니다.
+- IAB 분류(`extract-iab-gt`)만 Gemini API 키를 씁니다. Decisions API가 Vertex AI에 없기 때문입니다. Cloud Console의 사용자 인증 정보에서 API 제한을 "Gemini API"로 둔 키를 만들어 `config.yaml`의 `extraction.iab.api_key`에 넣습니다.
 
 모든 명령은 저장소 루트에서 `PYTHONPATH=src`로 실행합니다(`pip install -e .`을 했다면 생략).
 
@@ -38,9 +39,13 @@ cp config.example.yaml config.yaml
 | `preparation.data_root` | 내려받은 영상(`videos/`)과 메타데이터(`metadata/`)를 둘 위치 |
 | `preparation.download` | 선호 해상도(`height`, 기본 360), 쿠키 파일 경로, 대기 시간 |
 | `preparation.download.proxy`, `ca_cert_file`, `no_check_certificates` | 사내망용. 프록시 주소와 프록시의 CA 인증서를 주거나, 인증서 검사를 끕니다(`SSL: CERTIFICATE_VERIFY_FAILED`가 날 때) |
-| `models.<이름>` | 생성 모델은 `backend: vllm`(로컬 체크포인트 `path`) 또는 `backend: gemini`. `d3`, `bge`는 `path`만 둡니다 |
-| `models.<이름>.mm_processor_kwargs` | vLLM 모델의 이미지 처리 인자. Gemma는 `max_soft_tokens: 140`(키프레임당 120토큰) |
-| `extraction.graph.<이름>.scene_max_new_tokens` | 모델별 출력 토큰 한도 |
+| `extraction.models.<이름>` | `--model`로 고르는 생성 모델. `backend: vllm`(로컬 체크포인트 `path`) 또는 `backend: gemini` |
+| `extraction.models.<이름>.mm_processor_kwargs` | vLLM 모델의 이미지 처리 인자. Gemma는 `max_soft_tokens: 140`(키프레임당 120토큰) |
+| `extraction.models.<이름>.scene_max_new_tokens` | 모델별 장면당 출력 토큰 한도 |
+| `extraction.models.<이름>.threads` | Gemini 모델의 동시 요청 수(기본 32) |
+| `scoring.d3_path` | d3 Judge 체크포인트 경로. `--d3-server`만 쓰면 없어도 됩니다 |
+| `evaluation.bge_path` | 교사 일치도에 쓰는 BGE 인코더 경로 |
+| `extraction.iab` | IAB 분류용. `api_key`(Gemini API 키, `config.yaml`에만 둠), `model_id`(기본 `gemini-decision-1`), `threads`(동시에 분류할 장면 수, 기본 16) |
 
 `YT_DB_PIPELINE_CONFIG=/path/to/other.yaml`로 다른 설정 파일을 쓸 수 있습니다.
 
@@ -62,6 +67,9 @@ python -m preparation extract-keyframes
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemini
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b --split val
 
+# (선택) 장면별 IAB Content Taxonomy 3.1 라벨. 메인 파이프라인과 무관하며 --split을 빼면 전체
+python -m extraction extract-iab-gt --run-id $RUN_ID --taxonomy content_taxonomy_3.1_converted.csv
+
 # 3. Scoring: 교사는 전체(5단계 점수 필터에 필요), 비교와 보고서는 val
 python -m scoring score --run-id $RUN_ID --model gemini $D3
 python -m scoring score --run-id $RUN_ID --model gemma4_e2b --split val $D3
@@ -78,7 +86,7 @@ bash src/finetuning/train_lora.sh --model /path/to/gemma4_e2b_view \
 python -m finetuning merge --training-dir artifacts/runs/$RUN_ID/lora --output /path/to/gemma4_e2b_lora
 conda activate vc_cloud
 
-# 6. 최종 평가 (test): config.yaml의 models에 gemma4_e2b_lora(backend: vllm, 병합 모델 path)를 추가한 뒤
+# 6. 최종 평가 (test): config.yaml의 extraction.models에 gemma4_e2b_lora(backend: vllm, 병합 모델 path)를 추가한 뒤
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b --split test
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b_lora --split test
 python -m scoring score --run-id $RUN_ID --model gemma4_e2b --split test $D3
@@ -88,6 +96,7 @@ python -m evaluation compare --run-id $RUN_ID --students gemma4_e2b gemma4_e2b_l
 
 - 모든 단계는 다시 실행하면 끝난 부분을 건너뜁니다. 처음부터 다시 하려면 `--force`를 씁니다.
 - `--split train|val|test`와 `--limit N`으로 대상 영상을 줄일 수 있습니다. 키프레임이 준비되지 않은 영상은 건너뜁니다.
+- `extract-iab-gt`는 장면의 키프레임을 Gemini Decisions API에 보내 IAB 카테고리를 고릅니다. 한 질문의 선택지가 255개로 제한되므로 Tier 1(37개)에서 시작해 고른 카테고리의 하위 항목으로 한 단계씩 내려가고, 맞는 하위 항목이 없다는 답이 나오거나 더 내려갈 곳이 없으면 멈춥니다(장면당 1~4회 호출). 장면 그래프를 쓰지 않으므로 `extract-graph-scenes`보다 먼저 돌려도 됩니다. 분류표나 `model_id`가 바뀌면 기존 라벨을 지우고 다시 만듭니다.
 - `splits.csv`가 있으면 기존 배정은 바뀌지 않고 새 영상만 배정됩니다.
 - 분할은 용도를 나눠 씁니다. val은 프롬프트 개선, train·val은 LoRA 학습, test는 최종 평가에만 씁니다. 프롬프트를 고칠 때 test 결과를 보지 않습니다.
 - `$D3`는 d3 채점 방식입니다. `D3="--d3-server http://localhost:8899"`이면 vLLM Semantic Router 서버에 질문을 보내고, `D3=""`이면 GPU마다 d3를 직접 올립니다. 서버는 다른 터미널에서 먼저 띄웁니다: `vllm-sr serve vllm-sr/d3-mini -e -dp 4 --device-ids 0,1,2,3 --startup-timeout 7200`. 같은 d3 가중치이므로 두 방식은 채점 결과를 서로 재사용합니다(서버의 요청 배치로 확률이 거의 같은 판정 일부가 바뀔 수 있습니다).
@@ -103,12 +112,15 @@ artifacts/preparation/manifest.csv, splits.csv
 artifacts/preparation/resized_keyframes/640_360/<content_id>/<SSSS>.png
 artifacts/preparation/source_assets/<content_id>/timestamp_fixed_30s.json
 artifacts/runs/<RUN_ID>/extraction/graph_<모델>/<content_id>.jsonl
+artifacts/runs/<RUN_ID>/extraction/iab_gt/<content_id>.jsonl
 artifacts/runs/<RUN_ID>/scoring/graph_<모델>/<content_id>.jsonl
 artifacts/runs/<RUN_ID>/sft/{train,val}.jsonl
 artifacts/runs/<RUN_ID>/reports/*.md
 ```
 
 장면 행은 `content_id, scene_idx, tokens, warning, scene_graph`입니다. `scene_graph`는 `medium, format, topics, entities[{id,name,attributes}], actions[{actor,action,target,tool,place}]`이고, 파싱에 실패하면 원문 텍스트가 `PARSE_FAILED` 태그와 함께 들어갑니다.
+
+IAB 라벨 행은 `content_id, scene_idx, iab_id, iab_name, iab_path, confidence, tiers[{tier,id,name,confidence,top}]`입니다. `iab_id`는 분류표의 Unique ID, `iab_path`는 Tier 1부터의 이름, `confidence`는 마지막으로 고른 Tier의 확률, `top`은 그 Tier에서 확률이 높은 3개입니다. 하위 항목이 없다는 답으로 멈췄으면 그 확률이 `stop_confidence`에 들어가고, 실패한 장면은 `error`만 가집니다.
 
 ## Scoring이 재는 것
 

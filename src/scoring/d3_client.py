@@ -137,11 +137,11 @@ def open_judge(context, settings: dict, *, server: str | None, log=print):
                             concurrency=settings["server_concurrency"], log=log)
     from scoring.d3_workers import D3WorkerPool
 
-    return D3WorkerPool(context.model_path("d3"), batch_size=settings["batch_size"], log=log)
+    return D3WorkerPool(context.step_path("scoring", "d3_path"), batch_size=settings["batch_size"], log=log)
 
 
 def judge_name(context, settings: dict, *, server: str | None) -> str:
     """Part of the scoring identity: the same d3 weights reuse their scores on either backend."""
-    if server and not (context.config.get("models") or {}).get("d3"):
+    if server and not settings.get("d3_path"):
         return settings["server_model"]
-    return str(context.model_path("d3"))
+    return str(context.step_path("scoring", "d3_path"))

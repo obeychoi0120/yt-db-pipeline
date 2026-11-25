@@ -20,7 +20,7 @@ def build_model_view(context, *, model, output):
     log_step_start(context, "model-view", model=model, source=source, output=target,
                    max_soft_tokens=budget)
     if budget is None:
-        raise ValueError(f"models.{model}.mm_processor_kwargs.max_soft_tokens is not set")
+        raise ValueError(f"extraction.models.{model}.mm_processor_kwargs.max_soft_tokens is not set")
     if target.exists() and any(target.iterdir()):
         raise ValueError(f"output directory is not empty: {target}")
     target.mkdir(parents=True, exist_ok=True)

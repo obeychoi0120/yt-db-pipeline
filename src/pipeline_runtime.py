@@ -8,7 +8,7 @@ from visual_sampling import validate_sampling
 
 # Relative to the repository root; YT_DB_PIPELINE_CONFIG selects another file.
 CONFIG_PATH = Path(os.environ.get("YT_DB_PIPELINE_CONFIG") or "config.yaml")
-# Generation backends a model entry may name; other model entries (d3, bge) have none.
+# Generation backends an extraction.models entry may name.
 GENERATION_BACKENDS = ("vllm", "gemini")
 
 
@@ -125,6 +125,11 @@ class RunContext:
         return self.run_root / "scoring" / scene_arm(model)
 
     @property
+    def iab_dir(self) -> Path:
+        """IAB taxonomy labels of each scene (extract-iab-gt)."""
+        return self.run_root / "extraction" / "iab_gt"
+
+    @property
     def reports_dir(self) -> Path:
         return self.run_root / "reports"
 
@@ -137,30 +142,39 @@ class RunContext:
     # Models
 
     def model_settings(self, model: str) -> dict[str, Any]:
-        models = _require_mapping(self.config, "models")
-        value = models.get(model)
+        """One generation model (a --model name) of extraction.models."""
+        models = self.config["extraction"].get("models")
+        value = models.get(model) if isinstance(models, dict) else None
         if isinstance(value, str):
             value = {"path": value}
         if not isinstance(value, dict):
-            raise ConfigError(f"models.{model} is missing; add it to {CONFIG_PATH}")
+            raise ConfigError(f"extraction.models.{model} is missing; add it to {CONFIG_PATH}")
         return value
 
     def model_path(self, model: str) -> Path:
-        return _resolve(self.root, self.model_settings(model).get("path"), f"models.{model}.path")
+        return _resolve(
+            self.root, self.model_settings(model).get("path"), f"extraction.models.{model}.path"
+        )
+
+    def step_path(self, step: str, key: str) -> Path:
+        """A model path owned by one step, such as scoring.d3_path or evaluation.bge_path."""
+        return _resolve(self.root, (self.config.get(step) or {}).get(key), f"{step}.{key}")
 
     def generation_backend(self, model: str) -> str:
         backend = self.model_settings(model).get("backend")
         if backend not in GENERATION_BACKENDS:
             raise ConfigError(
-                f"models.{model}.backend must be one of {', '.join(GENERATION_BACKENDS)}"
+                f"extraction.models.{model}.backend must be one of {', '.join(GENERATION_BACKENDS)}"
             )
         return backend
 
     def max_new_tokens(self, model: str) -> int:
-        graph = self.config["extraction"].get("graph", {})
-        if model not in graph:
-            raise ConfigError(f"extraction.graph.{model}.scene_max_new_tokens is missing")
-        return graph[model]["scene_max_new_tokens"]
+        value = self.model_settings(model).get("scene_max_new_tokens")
+        if not isinstance(value, int) or value <= 0:
+            raise ConfigError(
+                f"extraction.models.{model}.scene_max_new_tokens must be a positive integer"
+            )
+        return value
 
 
 def scene_arm(model: str) -> str:
@@ -170,8 +184,13 @@ def scene_arm(model: str) -> str:
 
 def _validate_config(value: dict[str, Any]) -> None:
     """Only check what every step needs to start; everything else is read where it is used."""
-    for key in ("models", "extraction"):
-        _require_mapping(value, key)
+    if "models" in value:
+        raise ConfigError(
+            "the top-level models section moved into the steps: generation models to "
+            "extraction.models, models.d3.path to scoring.d3_path and models.bge.path to "
+            "evaluation.bge_path (see config.example.yaml)"
+        )
+    _require_mapping(value, "extraction")
     visual_evidence = _require_mapping(value["extraction"], "visual_evidence")
     try:
         validate_sampling(visual_evidence["scene_duration"], visual_evidence["num_keyframes"])

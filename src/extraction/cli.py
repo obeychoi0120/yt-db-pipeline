@@ -12,10 +12,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Extract scene graphs from prepared keyframes.")
     parser.add_argument("step", choices=tuple(STEP_HANDLERS))
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--schema", required=True, help="Path to one Markdown prompt.")
     parser.add_argument(
-        "--model", required=True,
-        help="A key of config models with backend vllm (local) or gemini.",
+        "--schema", help="extract-graph-scenes: path to one Markdown prompt."
+    )
+    parser.add_argument(
+        "--model",
+        help="extract-graph-scenes: a key of config models with backend vllm (local) or gemini.",
+    )
+    parser.add_argument(
+        "--taxonomy", help="extract-iab-gt: path to the tab-separated IAB Content Taxonomy table."
     )
     parser.add_argument("--split", choices=("train", "val", "test"), help="Only this split.")
     parser.add_argument("--limit", type=int, help="Only the first N selected videos.")
@@ -55,12 +60,18 @@ def main(argv: list[str] | None = None) -> int:
             options["stop_repeated_lines"] = True
         if args.limit is not None and args.limit <= 0:
             raise ValueError("--limit must be a positive integer")
+        if args.step == "extract-iab-gt":
+            _require(args, "--taxonomy")
+            _reject(args, options, "--schema", "--model")
+            options = {"taxonomy": args.taxonomy}
+        else:
+            _require(args, "--schema", "--model")
+            _reject(args, {}, "--taxonomy")
+            options.update(schema=args.schema, model=args.model)
         context = RunContext.load(args.run_id)
         result = STEP_HANDLERS[args.step](
             context,
             force=args.force,
-            schema=args.schema,
-            model=args.model,
             split=args.split,
             limit=args.limit,
             **options,
@@ -77,3 +88,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FAILED] {args.step}: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _flag_value(args: argparse.Namespace, flag: str):
+    return getattr(args, flag.lstrip("-").replace("-", "_"))
+
+
+def _require(args: argparse.Namespace, *flags: str) -> None:
+    missing = [flag for flag in flags if not _flag_value(args, flag)]
+    if missing:
+        raise ValueError(f"{args.step} requires {', '.join(missing)}")
+
+
+def _reject(args: argparse.Namespace, generation_options: dict, *flags: str) -> None:
+    given = [flag for flag in flags if _flag_value(args, flag)]
+    if generation_options:
+        given.append("generation penalty options")
+    if given:
+        raise ValueError(f"{args.step} does not take {', '.join(given)}")
