@@ -10,6 +10,11 @@
 # --model must be the directory made by `python -m finetuning model-view`, so that the
 # image token budget is the same as in extraction.
 #
+# GPUs: --gpus 0,1 (default: CUDA_VISIBLE_DEVICES, else every GPU). With several GPUs each
+# gets its own process (DDP, NPROC_PER_NODE). One process seeing several GPUs would split the
+# model across them (device_map auto), which ms-swift's Gemma 4 forward does not support:
+# "Expected all tensors to be on the same device". The global batch stays 16 for any count.
+#
 # Optional: --model-type (gemma4), --template (gemma4_nothinking, the ms-swift default for
 # E2B; a local directory name cannot select it), --lora-rank (16), --lora-alpha (32),
 # --target-modules (all-linear), --learning-rate (1e-4), --max-retries (3).
@@ -31,6 +36,9 @@ LORA_ALPHA=32
 TARGET_MODULES="all-linear"
 LEARNING_RATE=1e-4
 MAX_RETRIES=3
+GPUS="${CUDA_VISIBLE_DEVICES:-}"
+PER_DEVICE_BATCH=2
+GLOBAL_BATCH=16
 EXTRA_ARGS=()
 
 while [ $# -gt 0 ]; do
@@ -47,6 +55,7 @@ while [ $# -gt 0 ]; do
         --target-modules) TARGET_MODULES="$2"; shift 2 ;;
         --learning-rate) LEARNING_RATE="$2"; shift 2 ;;
         --max-retries) MAX_RETRIES="$2"; shift 2 ;;
+        --gpus) GPUS="$2"; shift 2 ;;
         --) shift; EXTRA_ARGS=("$@"); break ;;
         *) echo "[ERROR] unknown argument: $1"; exit 1 ;;
     esac
@@ -66,7 +75,19 @@ done
 command -v swift >/dev/null 2>&1 || { echo "[ERROR] 'swift' (ms-swift) not found; activate its env"; exit 1; }
 read -r -a TARGET_MODULE_LIST <<< "$TARGET_MODULES"
 
+[ -n "$GPUS" ] || GPUS=$(nvidia-smi --query-gpu=index --format=csv,noheader | paste -sd, -)
+GPU_COUNT=$(echo "$GPUS" | tr ',' '\n' | grep -c .)
+[ "$GPU_COUNT" -ge 1 ] || { echo "[ERROR] no GPU to train on"; exit 1; }
+export CUDA_VISIBLE_DEVICES="$GPUS"
+if [ "$GPU_COUNT" -gt 1 ]; then
+    export NPROC_PER_NODE="$GPU_COUNT"
+else
+    unset NPROC_PER_NODE
+fi
+GRAD_ACCUM=$(( (GLOBAL_BATCH + PER_DEVICE_BATCH * GPU_COUNT - 1) / (PER_DEVICE_BATCH * GPU_COUNT) ))
+
 echo "model=$MODEL_PATH type=$MODEL_TYPE train=$TRAIN_DATA val=$VAL_DATA out=$OUTPUT_DIR epochs=$NUM_EPOCHS"
+echo "gpus=$GPUS processes=$GPU_COUNT batch=$PER_DEVICE_BATCH x $GPU_COUNT x $GRAD_ACCUM (accumulation)"
 
 run_sft() {
     local resume_args=()
@@ -85,9 +106,9 @@ run_sft() {
         --freeze_aligner true \
         --learning_rate "$LEARNING_RATE" \
         --num_train_epochs "$NUM_EPOCHS" \
-        --per_device_train_batch_size 2 \
+        --per_device_train_batch_size "$PER_DEVICE_BATCH" \
         --per_device_eval_batch_size 4 \
-        --gradient_accumulation_steps 8 \
+        --gradient_accumulation_steps "$GRAD_ACCUM" \
         --lr_scheduler_type cosine \
         --warmup_ratio 0.1 \
         --weight_decay 0.01 \
