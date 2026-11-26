@@ -116,6 +116,8 @@ def test_agreement_is_one_for_identical_graphs_and_zero_when_missing():
     assert changed["entities"]["matched"] == 2
     assert changed["roles"]["agreement"] < 1.0
     assert empty_agreement(ID_GRAPH)["entities"]["recall"] == 0.0
+    bare = empty_agreement({**ID_GRAPH, "entities": [], "actions": [], "topics": []})
+    assert bare["entities"]["f1"] == bare["actions"]["f1"] == bare["topics"]["f1"] == 0.0
 
 
 def test_label_metrics_counts_missing_scenes_as_wrong():

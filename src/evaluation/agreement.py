@@ -86,7 +86,10 @@ def compare_graphs(student: dict, teacher: dict, encode, *, threshold: float) ->
 
 def empty_agreement(teacher: dict) -> dict:
     """A scene the student has no usable graph for: nothing of the teacher is recovered."""
-    zero = lambda count: _prf(0, 0, count) if count else _prf(0, 0, 0)  # noqa: E731
+    def zero(count):  # 0 even when the teacher lists nothing: a missing graph earns no credit
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0,
+                "matched": 0, "student": 0, "teacher": count}
+
     return {
         "medium": 0.0, "format": 0.0,
         "topics": zero(len(teacher["topics"])), "entities": zero(len(teacher["entities"])),

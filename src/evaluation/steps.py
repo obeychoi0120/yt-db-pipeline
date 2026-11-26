@@ -156,7 +156,7 @@ def compare(context, *, teacher, students, split=None, limit=None, encoder=None)
                   "| --- | --- | --- | --- | --- |"]
         for model in models:
             s = scores[model]
-            lines.append(f"| {model} | – | – | – | – | – |" if s is None else
+            lines.append(f"| {model} | – | – | – | – |" if s is None else
                          f"| {model} | {s['scored_scenes']} | "
                          + " | ".join(_cell(s["units"][unit]) for unit in UNITS) + " |")
         lines += ["", "d3 점수는 `python -m scoring score`로 채점해 둔 장면 중 "
