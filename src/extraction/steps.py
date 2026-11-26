@@ -12,6 +12,7 @@ from extraction.scene_executor import run_gemini_scenes, run_vllm_scenes
 from extraction.scene_storage import (
     ExtractionStepError, ensure_generation_identity, read_scene_records,
 )
+from extraction.segments import extract_segment_gt
 from extraction.semantic_graph import GRAPH_SCHEMA_VERSION
 from extraction.semantic_graph.parser import GRAPH_PARSER_VERSION
 from extraction.step_support import result, scene_generation_rows, visual_rows
@@ -218,4 +219,5 @@ def extract_graph_scenes(
 STEP_HANDLERS = {
     "extract-graph-scenes": extract_graph_scenes,
     "extract-iab-gt": extract_iab_gt,
+    "extract-segment-gt": extract_segment_gt,
 }

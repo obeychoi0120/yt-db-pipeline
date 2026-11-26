@@ -22,6 +22,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--taxonomy", help="extract-iab-gt: path to the tab-separated IAB Content Taxonomy table."
     )
+    parser.add_argument(
+        "--segments",
+        help="extract-segment-gt: path to the tab-separated audience segment table.",
+    )
     parser.add_argument("--split", choices=("train", "val", "test"), help="Only this split.")
     parser.add_argument("--limit", type=int, help="Only the first N selected videos.")
     parser.add_argument(
@@ -62,11 +66,15 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--limit must be a positive integer")
         if args.step == "extract-iab-gt":
             _require(args, "--taxonomy")
-            _reject(args, options, "--schema", "--model")
+            _reject(args, options, "--schema", "--model", "--segments")
             options = {"taxonomy": args.taxonomy}
+        elif args.step == "extract-segment-gt":
+            _require(args, "--segments")
+            _reject(args, options, "--schema", "--model", "--taxonomy")
+            options = {"segments": args.segments}
         else:
             _require(args, "--schema", "--model")
-            _reject(args, {}, "--taxonomy")
+            _reject(args, {}, "--taxonomy", "--segments")
             options.update(schema=args.schema, model=args.model)
         context = RunContext.load(args.run_id)
         result = STEP_HANDLERS[args.step](

@@ -54,7 +54,7 @@ extraction:
       path: /path/to/models/gemma-4-E2B-it
       mm_processor_kwargs: {max_soft_tokens: 140}   # Image token budget per keyframe; must match between extraction and LoRA training.
       scene_max_new_tokens: 512   # output token limit per scene
-  # extract-iab-gt: the Gemini Decisions API runs on the Gemini Developer API, not Vertex AI,
+  # extract-iab-gt and extract-segment-gt: the Gemini Decisions API runs on the Gemini Developer API, not Vertex AI,
   # so it needs an API key (Cloud Console > Credentials, restricted to "Gemini API").
   iab:
     api_key: YOUR_GEMINI_API_KEY   # set in config.yaml only; never committed

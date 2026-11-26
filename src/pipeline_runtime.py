@@ -130,6 +130,11 @@ class RunContext:
         return self.run_root / "extraction" / "iab_gt"
 
     @property
+    def segment_dir(self) -> Path:
+        """TV genre segment labels of each scene (extract-segment-gt)."""
+        return self.run_root / "extraction" / "segment_gt"
+
+    @property
     def reports_dir(self) -> Path:
         return self.run_root / "reports"
 

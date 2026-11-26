@@ -213,12 +213,12 @@ def iab_settings(context) -> dict:
     return settings
 
 
-def taxonomy_path(context, taxonomy: str | Path) -> Path:
+def taxonomy_path(context, taxonomy: str | Path, flag: str = "--taxonomy") -> Path:
     path = Path(taxonomy).expanduser()
     if not path.is_absolute():
         path = context.root / path
     if not path.is_file():
-        raise ValueError(f"--taxonomy file not found: {path}")
+        raise ValueError(f"{flag} file not found: {path}")
     return path
 
 
@@ -231,37 +231,30 @@ def keyframe_paths(visual: dict) -> dict[int, list[str]]:
     }
 
 
-def _drop_stale_labels(output_dir: Path, identity: dict, *, force: bool) -> None:
-    """Labels made with another taxonomy, model or question wording are deleted first."""
-    path = output_dir / "iab_identity.json"
+def drop_stale_labels(
+    output_dir: Path, identity: dict, *, force: bool, name: str = "iab_identity.json",
+    tag: str = "IAB", what: str = "taxonomy",
+) -> None:
+    """Labels made with another table, model or question wording are deleted first."""
+    path = output_dir / name
     saved = read_json(path) if path.is_file() else None
     stale = sorted(output_dir.glob("*.jsonl")) if output_dir.is_dir() else []
     if stale and (force or saved != identity):
-        why = "--force" if force else "taxonomy or model changed"
-        print(f"[IAB] {why}; removing {len(stale)} label files in {output_dir}", flush=True)
+        why = "--force" if force else f"{what} or model changed"
+        print(f"[{tag}] {why}; removing {len(stale)} label files in {output_dir}", flush=True)
         for old in stale:
             old.unlink()
     atomic_write_json(path, identity, durable=True)
 
 
-def extract_iab_gt(
-    context, *, taxonomy, split=None, limit=None, force=False, client_factory=DecisionClient,
+def label_scenes(
+    context, *, stage: str, tag: str, output_dir: Path, settings: dict, classify, split, limit,
+    client_factory,
 ):
-    settings = iab_settings(context)
-    path = taxonomy_path(context, taxonomy)
-    output_dir = context.iab_dir
-    log_step_start(
-        context, STAGE, taxonomy=path, model_id=settings["model_id"],
-        threads=settings["threads"], output_dir=output_dir, force=force,
-        **({"split": split} if split else {}),
-        **({"limit": limit} if limit else {}),
-    )
-    tree = load_taxonomy(path)
-    identity = {
-        "version": IAB_VERSION, "model_id": settings["model_id"],
-        "taxonomy": {"name": path.name, "sha256": file_fingerprint(path)},
-    }
-    _drop_stale_labels(output_dir, identity, force=force)
+    """Label every pending scene with classify(client, images) and keep one JSONL per video.
+
+    Scenes labelled by an earlier run are reused; failed ones are asked again.
+    """
     visuals = visual_rows(context, split=split, limit=limit)
     rows: dict[str, dict[int, dict]] = {}
     pending: list[tuple[str, int, list[str]]] = []
@@ -286,7 +279,7 @@ def extract_iab_gt(
     def label(cid: str, scene_idx: int, images: list[str]) -> str:
         row = {"content_id": cid, "scene_idx": scene_idx}
         try:
-            row.update(classify_scene(client, image_blocks(images), tree))
+            row.update(classify(client, image_blocks(images)))
         except Exception as exc:  # one failed scene never stops the others
             row["error"] = f"{type(exc).__name__}: {exc}"
         with locks[cid]:
@@ -299,9 +292,9 @@ def extract_iab_gt(
         return "failed" if "error" in row else "ok"
 
     with InferenceProgress(
-        total=len(pending), reused=reused, desc="iab_gt", unit="scene", outcomes=OUTCOMES,
+        total=len(pending), reused=reused, desc=output_dir.name, unit="scene", outcomes=OUTCOMES,
     ) as progress:
-        executor = ThreadPoolExecutor(settings["threads"], thread_name_prefix="iab")
+        executor = ThreadPoolExecutor(settings["threads"], thread_name_prefix=tag.lower())
         try:
             futures = {
                 executor.submit(label, cid, scene_idx, images): (cid, scene_idx)
@@ -313,12 +306,38 @@ def extract_iab_gt(
                 progress.complete(outcome=outcome, task_id=f"{cid}:{scene_idx}")
                 if outcome == "failed":
                     write_progress(
-                        progress, f"[IAB] {cid} scene {scene_idx}: {rows[cid][scene_idx]['error']}"
+                        progress,
+                        f"[{tag}] {cid} scene {scene_idx}: {rows[cid][scene_idx]['error']}",
                     )
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
     tokens = getattr(client, "input_tokens", 0)
     if tokens:
-        print(f"[IAB] input_tokens={tokens} over {len(pending)} scene(s)", flush=True)
+        print(f"[{tag}] input_tokens={tokens} over {len(pending)} scene(s)", flush=True)
     failure_count = sum("error" in row for scenes in rows.values() for row in scenes.values())
-    return result(STAGE, content_count=len(visuals), failure_count=failure_count)
+    return result(stage, content_count=len(visuals), failure_count=failure_count)
+
+
+def extract_iab_gt(
+    context, *, taxonomy, split=None, limit=None, force=False, client_factory=DecisionClient,
+):
+    settings = iab_settings(context)
+    path = taxonomy_path(context, taxonomy)
+    output_dir = context.iab_dir
+    log_step_start(
+        context, STAGE, taxonomy=path, model_id=settings["model_id"],
+        threads=settings["threads"], output_dir=output_dir, force=force,
+        **({"split": split} if split else {}),
+        **({"limit": limit} if limit else {}),
+    )
+    tree = load_taxonomy(path)
+    identity = {
+        "version": IAB_VERSION, "model_id": settings["model_id"],
+        "taxonomy": {"name": path.name, "sha256": file_fingerprint(path)},
+    }
+    drop_stale_labels(output_dir, identity, force=force)
+    return label_scenes(
+        context, stage=STAGE, tag="IAB", output_dir=output_dir, settings=settings,
+        classify=lambda client, images: classify_scene(client, images, tree),
+        split=split, limit=limit, client_factory=client_factory,
+    )
