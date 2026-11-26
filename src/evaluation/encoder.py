@@ -11,7 +11,9 @@ class TextEncoder:
             import torch
             from transformers import AutoModel, AutoTokenizer
         except ImportError as exc:
-            raise RuntimeError("evaluation requires torch and transformers") from exc
+            raise RuntimeError(
+                f"evaluation could not import torch and transformers: {exc}"
+            ) from exc
         self._torch = torch
         self.tokenizer = AutoTokenizer.from_pretrained(str(model_path), local_files_only=True)
         self.model = AutoModel.from_pretrained(str(model_path), local_files_only=True)

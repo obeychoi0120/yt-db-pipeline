@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# 실행: conda activate vc_cloud && bash run_script.sh
+# 실행: bash run_script.sh (conda 환경은 아래 MAIN_ENV, FT_ENV로 스크립트가 바꿉니다)
 # 돌릴 줄만 남기고 나머지는 앞에 #을 붙여 주석 처리하세요.
 # 모든 단계는 다시 실행하면 끝난 부분을 건너뜁니다.
 #
 # 분할 사용: val은 프롬프트 개선(2~4단계), train·val은 LoRA 학습(5단계),
 # test는 최종 평가(6단계)에서만 봅니다. 프롬프트를 고칠 때 test 결과를 보지 마세요.
-# set -e
 cd "$(dirname "$0")"
 export PYTHONPATH=src
+# bash로 실행한 스크립트에서 conda activate를 쓰려면 conda 셸 함수를 먼저 불러와야 합니다.
+eval "$(conda shell.bash hook)"
+# 한 단계가 실패하면 그 자리에서 멈춥니다(실패한 단계의 결과로 다음 단계를 돌리지 않도록).
+set -e
+
+MAIN_ENV=vc_cloud   # 준비·추출·채점·평가 환경 (requirements-main.txt, requirements-scoring.txt)
+FT_ENV=gemma_ft     # LoRA 학습·병합 환경 (requirements-finetune.txt)
+conda activate $MAIN_ENV
 
 RUN_ID=R01
 PROMPT=prompts/scene_graph_v8_2.md
@@ -38,17 +45,23 @@ python -m scoring report --run-id $RUN_ID --models gemini gemma4_e2b --split val
 python -m finetuning build-dataset --run-id $RUN_ID --schema $PROMPT --min-scene-score 0.7
 python -m finetuning model-view --output artifacts/models/gemma4_e2b_view
 
-# 5-2. LoRA 학습과 병합 (이 부분은 conda activate gemma_ft 환경에서 실행)
+# 5-2. LoRA 학습과 병합: ms-swift가 있는 FT_ENV에서 실행
+#   GPU는 CUDA_VISIBLE_DEVICES 또는 train_lora.sh의 --gpus 0,1로 정합니다(vllm-sr이 쓰는 GPU는 빼기).
+conda activate $FT_ENV
 MODEL_VIEW=artifacts/models/gemma4_e2b_view
 TRAIN_DATA=artifacts/runs/$RUN_ID/sft/train.jsonl
 VAL_DATA=artifacts/runs/$RUN_ID/sft/val.jsonl
 LORA_DIR=artifacts/runs/$RUN_ID/lora
 bash src/finetuning/train_lora.sh --model $MODEL_VIEW --train-data $TRAIN_DATA --val-data $VAL_DATA --output-dir $LORA_DIR --epochs 3
 python -m finetuning merge --training-dir $LORA_DIR --output artifacts/models/gemma4_e2b_lora
+conda activate $MAIN_ENV
 
-# 6. 최종 평가 (test): 먼저 config.yaml의 models와 extraction.graph에 gemma4_e2b_lora를 추가
+# 6. 최종 평가 (test): 먼저 config.yaml의 extraction.models에 gemma4_e2b_lora를 추가
+#   (gemma4_e2b와 같은 설정에 path만 병합한 모델 디렉터리로)
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b --split test
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b_lora --split test
 python -m scoring score --run-id $RUN_ID --model gemma4_e2b --split test $D3
 python -m scoring score --run-id $RUN_ID --model gemma4_e2b_lora --split test $D3
+python -m scoring coverage --run-id $RUN_ID --models gemini gemma4_e2b gemma4_e2b_lora --split test $D3
+python -m scoring report --run-id $RUN_ID --models gemma4_e2b gemma4_e2b_lora --split test
 python -m evaluation compare --run-id $RUN_ID --students gemma4_e2b gemma4_e2b_lora --split test
