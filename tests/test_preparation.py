@@ -26,6 +26,30 @@ def test_manifest_from_txt(tmp_path):
     assert category_of(rows[1]["content_id"]) == "Tech"
 
 
+def test_manifest_from_named_list(tmp_path):
+    source = tmp_path / "list.txt"
+    source.write_text(
+        "Lifestyle_and_Travel_001.mp4 https://www.youtube.com/watch?v=fulap_pZ_Uc\n"
+        "Sports_001.mp4 https://youtu.be/abc_123_x\n"
+        "Lifestyle_and_Travel_002 https://youtu.be/NeqB-O1M7IY\n",
+        encoding="utf-8",
+    )
+    rows = manifest_rows_from_txt(source)
+    assert [row["content_id"] for row in rows] == [
+        "Lifestyle_and_Travel_001_fulap_pZ_Uc", "Sports_001_abc_123_x",
+        "Lifestyle_and_Travel_002_NeqB-O1M7IY",
+    ]
+    assert [category_of(row["content_id"]) for row in rows] == [
+        "Lifestyle_and_Travel", "Sports", "Lifestyle_and_Travel"
+    ]
+    source.write_text("Sports_002.mp4 https://youtu.be/abc\n", encoding="utf-8")
+    with pytest.raises(ManifestContractError):  # numbers start at 001 in each category
+        manifest_rows_from_txt(source)
+    source.write_text("[Sports]\nDrama_001.mp4 https://youtu.be/abc\n", encoding="utf-8")
+    with pytest.raises(ManifestContractError):
+        manifest_rows_from_txt(source)
+
+
 def test_manifest_rejects_wrong_section_and_bad_lines(tmp_path):
     source = tmp_path / "list.txt"
     source.write_text("[News]\n001_Tech001 https://youtu.be/abc\n", encoding="utf-8")

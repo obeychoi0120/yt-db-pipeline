@@ -35,7 +35,7 @@ cp config.example.yaml config.yaml
 
 | 키 | 내용 |
 | --- | --- |
-| `preparation.video_list` | `[Category]` 헤더와 `001_Category001 https://…` 줄로 된 TXT 목록 |
+| `preparation.video_list` | `Category_001.mp4 https://…` 줄로 된 TXT 목록. 번호는 카테고리마다 001부터 세고, `[Category]` 헤더는 없어도 된다. 예전 `001_Category001 https://…` 형식도 읽는다 |
 | `preparation.data_root` | 내려받은 영상(`videos/`)과 메타데이터(`metadata/`)를 둘 위치 |
 | `preparation.download` | 선호 해상도(`height`, 기본 360), 쿠키 파일 경로, 대기 시간 |
 | `preparation.download.proxy`, `ca_cert_file`, `no_check_certificates` | 사내망용. 프록시 주소와 프록시의 CA 인증서를 주거나, 인증서 검사를 끕니다(`SSL: CERTIFICATE_VERIFY_FAILED`가 날 때) |
@@ -68,9 +68,9 @@ python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --mo
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemma4_e2b --split val
 
 # (선택) 장면별 IAB Content Taxonomy 3.1 라벨. 메인 파이프라인과 무관하며 --split을 빼면 전체
-python -m extraction extract-iab-gt --run-id $RUN_ID --taxonomy content_taxonomy_3.1_converted.csv
+python -m extraction extract-iab-gt --run-id $RUN_ID --taxonomy data/content_taxonomy_3.1_converted.csv
 # (선택) 장면별 TV 장르 세그먼트 라벨. 설정은 extraction.iab를 같이 씀
-python -m extraction extract-segment-gt --run-id $RUN_ID --segments audience_collectives_segment_repository.csv
+python -m extraction extract-segment-gt --run-id $RUN_ID --segments data/audience_collectives_segment_repository.csv
 
 # 3. Scoring: 교사는 전체(5단계 점수 필터에 필요), 비교와 보고서는 val
 python -m scoring score --run-id $RUN_ID --model gemini $D3

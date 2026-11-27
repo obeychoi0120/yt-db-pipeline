@@ -1,4 +1,3 @@
-[News]
 001_News001 https://www.youtube.com/watch?v=VV3qIkq5ofY
 002_News002 https://www.youtube.com/watch?v=R0NS_0Sy9v0
 003_News003 https://www.youtube.com/watch?v=pUxN3h8hHIg
@@ -50,8 +49,6 @@
 049_News049 https://www.youtube.com/watch?v=bgDXsI4OHZE
 050_News050 https://www.youtube.com/watch?v=FkfsZwtikkA
 051_News051 https://www.youtube.com/watch?v=yNdHpe0_rZc
-
-[Sports]
 052_Sports001 https://www.youtube.com/watch?v=HM49RJU4Nnc
 053_Sports002 https://www.youtube.com/watch?v=NxdQ-pgEvS8
 054_Sports003 https://www.youtube.com/watch?v=A-Pd0p9V56c
@@ -84,50 +81,6 @@
 081_Sports030 https://www.youtube.com/watch?v=irwc3Y2VIiQ
 082_Sports031 https://www.youtube.com/watch?v=TmoJv8pQcu0
 083_Sports032 https://www.youtube.com/watch?v=orwhP2LLOCw
-
-[Movie]
-084_Movie001 https://www.youtube.com/watch?v=NdI-k_CJ6vo
-085_Movie002 https://www.youtube.com/watch?v=CWb1KZPi0Ek
-086_Movie003 https://www.youtube.com/watch?v=-PWmE1A7Z8s
-087_Movie004 https://www.youtube.com/watch?v=OEVg2R4UGio
-088_Movie005 https://www.youtube.com/watch?v=0jfcKzYc3RU
-089_Movie006 https://www.youtube.com/watch?v=kWC1W7BkNM0
-090_Movie007 https://www.youtube.com/watch?v=pk-tzsXqFDA
-091_Movie008 https://www.youtube.com/watch?v=YAPUVhAS8UQ
-092_Movie009 https://www.youtube.com/watch?v=6z9qws7M8q8
-093_Movie010 https://www.youtube.com/watch?v=C6-rwI-7hyI
-094_Movie011 https://www.youtube.com/watch?v=RyWwXgb-MA0
-095_Movie012 https://www.youtube.com/watch?v=tjJFehQd2oA
-096_Movie013 https://www.youtube.com/watch?v=1eoKvx5X9JQ
-097_Movie014 https://www.youtube.com/watch?v=bW7kDVh4w7U
-098_Movie015 https://www.youtube.com/watch?v=NttUBB98zg4
-099_Movie016 https://www.youtube.com/watch?v=vZ5vkiazP1s
-100_Movie017 https://www.youtube.com/watch?v=5BxqahE0fu8
-101_Movie018 https://www.youtube.com/watch?v=y7weGcCvwTQ
-102_Movie019 https://www.youtube.com/watch?v=HXRJYcqlPSY
-103_Movie020 https://www.youtube.com/watch?v=6mbnuiJrZ0o
-104_Movie021 https://www.youtube.com/watch?v=IH7F9vITYmw
-105_Movie022 https://www.youtube.com/watch?v=-Qtk3nValm4
-106_Movie023 https://www.youtube.com/watch?v=UBG3imHVXYI
-107_Movie024 https://www.youtube.com/watch?v=e_uZicX8DDk
-108_Movie025 https://www.youtube.com/watch?v=SnAU2GOM8sQ
-109_Movie026 https://www.youtube.com/watch?v=obCUZpWl9po
-110_Movie027 https://www.youtube.com/watch?v=6bygIfbvz3o
-111_Movie028 https://www.youtube.com/watch?v=zLXHlrY97Ss
-112_Movie029 https://www.youtube.com/watch?v=eh-5fQEG_6g
-113_Movie030 https://www.youtube.com/watch?v=lqNK908hrJU
-114_Movie031 https://www.youtube.com/watch?v=hYNUmaHQusY
-115_Movie032 https://www.youtube.com/watch?v=eInh-XFiReU
-116_Movie033 https://www.youtube.com/watch?v=b9qA9zG6nE8
-117_Movie034 https://www.youtube.com/watch?v=TSmEn1qfhnU
-118_Movie035 https://www.youtube.com/watch?v=L4yo2Rupnm4
-119_Movie036 https://www.youtube.com/watch?v=zBNKrja8dyY
-120_Movie037 https://www.youtube.com/watch?v=dGnjhCcEIOY
-121_Movie038 https://www.youtube.com/watch?v=h67AHvHMtxY
-122_Movie039 https://www.youtube.com/watch?v=vqIOxXu51Fo
-123_Movie040 https://www.youtube.com/watch?v=QkSnQ0rdUsk
-
-[Variety]
 124_Variety001 https://www.youtube.com/watch?v=dyjfCadehBo
 125_Variety002 https://www.youtube.com/watch?v=FWXHJUk18zo
 126_Variety003 https://www.youtube.com/watch?v=p9PLnrBXEAk
@@ -170,10 +123,8 @@
 163_Variety040 https://www.youtube.com/watch?v=xI-nAElOtmM
 164_Variety041 https://www.youtube.com/watch?v=sIxjJznFhrA
 165_Variety042 https://www.youtube.com/watch?v=4JtUPBkYQOY
-
-[Documentary]
 166_Documentary001 https://www.youtube.com/watch?v=ah5DGbv2E64
-167_Documentary002 https://www.youtube.com/watch?v=C1_Rx7YqQqk
+167_Documentary002 https://www.youtube.com/watch?v=C1_Rx7YqQqk  
 168_Documentary003 https://www.youtube.com/watch?v=VyKFI7BCYY8
 169_Documentary004 https://www.youtube.com/watch?v=JVZzpjS3hkE
 170_Documentary005 https://www.youtube.com/watch?v=Ucis3S81Xcw
@@ -212,8 +163,6 @@
 203_Documentary038 https://www.youtube.com/watch?v=WgjBaXpuSE4
 204_Documentary039 https://www.youtube.com/watch?v=le6sVSGMe_k
 205_Documentary040 https://www.youtube.com/watch?v=ncOr6JSTMlw
-
-[Drama]
 206_Drama001 https://www.youtube.com/watch?v=r1Ln4oGBWdI
 207_Drama002 https://www.youtube.com/watch?v=p4TN6l87zuw
 208_Drama003 https://www.youtube.com/watch?v=33WJ9aPDHuc
@@ -254,8 +203,6 @@
 243_Drama038 https://www.youtube.com/watch?v=Ya_trIAWIXA
 244_Drama039 https://www.youtube.com/watch?v=Ik6ZCDyDvxI
 245_Drama040 https://www.youtube.com/watch?v=W4Sp2XwfQDg
-
-[Animation]
 246_Animation001 https://www.youtube.com/watch?v=kWNFkHpaeDs
 247_Animation002 https://www.youtube.com/watch?v=PG_IHoL96lM
 248_Animation003 https://www.youtube.com/watch?v=ZadUOiEkYeA
@@ -297,8 +244,6 @@
 284_Animation039 https://www.youtube.com/watch?v=OaEw7ZFs5sU
 285_Animation040 https://www.youtube.com/watch?v=h6fcK_fRYaI
 286_Animation041 https://www.youtube.com/watch?v=75NQK-Sm1YY
-
-[Shopping]
 287_Shopping001 https://www.youtube.com/watch?v=udEDn10OP5s
 288_Shopping002 https://www.youtube.com/watch?v=C2-zmXqyqNk
 289_Shopping003 https://www.youtube.com/watch?v=jMDG4ICnhKM
@@ -346,8 +291,6 @@
 331_Shopping045 https://www.youtube.com/watch?v=IkJ-3wr7aZI
 332_Shopping046 https://www.youtube.com/watch?v=e5NMV4U790o
 333_Shopping047 https://www.youtube.com/watch?v=9BKUM3ItfJE
-
-[Travel]
 334_Travel001 https://www.youtube.com/watch?v=fulap_pZ_Uc
 335_Travel002 https://www.youtube.com/watch?v=DjYPUs40AZk
 336_Travel003 https://www.youtube.com/watch?v=BH-P6GwDSNU
@@ -405,8 +348,6 @@
 388_Travel055 https://www.youtube.com/watch?v=OONmydfz5ls
 389_Travel056 https://www.youtube.com/watch?v=wGqfg6yVQt4
 390_Travel057 https://www.youtube.com/watch?v=vOkkWuEwUmc
-
-[Music]
 391_Music001 https://www.youtube.com/watch?v=00IPFnp2Tdg
 392_Music002 https://www.youtube.com/watch?v=FQZhehVRSXQ
 393_Music003 https://www.youtube.com/watch?v=Lm48ZD8s9PE
@@ -457,8 +398,6 @@
 438_Music048 https://www.youtube.com/watch?v=84Tq-eAJIk4
 439_Music049 https://www.youtube.com/watch?v=Fr7oYjnt3bM
 440_Music050 https://www.youtube.com/watch?v=tT2gVblzFvY
-
-[Game]
 441_Game001 https://www.youtube.com/watch?v=YqNg2yO7eQU
 442_Game002 https://www.youtube.com/watch?v=Dq6L1AHD9kU
 443_Game003 https://www.youtube.com/watch?v=NzB09wB7Mrc
@@ -491,8 +430,6 @@
 470_Game030 https://www.youtube.com/watch?v=8EE349dhGiM
 471_Game031 https://www.youtube.com/watch?v=q9__dbGZCzE
 472_Game032 https://www.youtube.com/watch?v=37am_ksqJsc
-
-[Tech]
 473_Tech001 https://www.youtube.com/watch?v=TJ7YMKDR4D0
 474_Tech002 https://www.youtube.com/watch?v=NeqB-O1M7IY
 475_Tech003 https://www.youtube.com/watch?v=NJG0t45_QZk

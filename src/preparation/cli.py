@@ -12,7 +12,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Prepare YouTube videos: manifest, split, download, keyframes."
     )
     parser.add_argument("step", choices=tuple(STEP_HANDLERS))
-    parser.add_argument("--list", dest="video_list", help="[Category] TXT video list (create-manifest).")
+    parser.add_argument("--list", dest="video_list", help="TXT video list (create-manifest).")
     parser.add_argument("--limit", type=int, help="Only the first N manifest videos.")
     parser.add_argument("--content-id", dest="content_ids", nargs="+", help="Only these videos.")
     parser.add_argument(

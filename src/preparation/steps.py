@@ -17,7 +17,7 @@ def _preparation(context) -> dict:
 
 
 def create_manifest(context, *, video_list=None, **_):
-    """Write manifest.csv from the [Category] TXT list."""
+    """Write manifest.csv from the TXT video list."""
     source = video_list or _preparation(context).get("video_list")
     if not source:
         raise ValueError("pass --list or set preparation.video_list")

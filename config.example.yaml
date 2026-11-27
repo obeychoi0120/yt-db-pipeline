@@ -2,8 +2,8 @@
 artifacts_root: artifacts
 
 preparation:
-  # [Category] TXT list: section headers, then "001_Category001 https://..." lines.
-  video_list: 000_video_list_merged_500.txt
+  # TXT list of "Category_001.mp4 https://..." lines, numbered from 001 in each category.
+  video_list: data/video_list_umd_500_261127.txt
   # Downloaded videos (videos/<content_id>.mp4) and metadata (metadata/<content_id>.json).
   data_root: /path/to/youtube_dataset
   download:
