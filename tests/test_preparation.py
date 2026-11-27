@@ -92,9 +92,19 @@ def test_format_selector_prefers_requested_height():
 def test_six_keyframes_per_thirty_second_window():
     windows = build_fixed_windows(65, scene_duration=30, num_keyframes=6)
     assert [w["keyframe_timestamps"] for w in windows[:2]] == [
-        [2.5, 7.5, 12.5, 17.5, 22.5, 27.5], [32.5, 37.5, 42.5, 47.5, 52.5, 57.5]
+        [0, 5, 10, 15, 20, 25], [30, 35, 40, 45, 50, 55]
     ]
-    assert windows[2]["keyframe_timestamps"] == [62.5]
+    assert windows[2]["keyframe_timestamps"] == [60]
+
+
+def test_short_video_and_uneven_interval_keyframes():
+    assert build_fixed_windows(3, scene_duration=30, num_keyframes=6)[0][
+        "keyframe_timestamps"
+    ] == [0]
+    # 30 / 7 seconds apart, floored to tenths.
+    assert build_fixed_windows(30, scene_duration=30, num_keyframes=7)[0][
+        "keyframe_timestamps"
+    ] == [0, 4.2, 8.5, 12.8, 17.1, 21.4, 25.7]
 
 
 def test_ytdlp_command_for_a_corporate_proxy(tmp_path):

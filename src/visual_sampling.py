@@ -4,6 +4,9 @@ from fractions import Fraction
 import math
 from typing import Any
 
+# Where in each sampling bin the keyframe sits; recorded beside the scene graphs.
+KEYFRAME_POSITION = "start"
+
 
 def validate_sampling(scene_duration: int, num_keyframes: int) -> None:
     for name, value in (("scene_duration", scene_duration), ("num_keyframes", num_keyframes)):
@@ -48,13 +51,8 @@ def build_fixed_windows(
             for index in range(num_keyframes)
             if scene_start + index * interval < scene_end
         ]
-        # Keep full sampling bins; only clip the final bin to the actual video end.
-        keyframes = list(
-            dict.fromkeys(
-                truncate_timestamp((start + min(start + interval, scene_end)) / 2)
-                for start in boundaries
-            )
-        )
+        # One keyframe at the start of every sampling bin: 0, 5, 10, ... seconds.
+        keyframes = list(dict.fromkeys(truncate_timestamp(start) for start in boundaries))
         windows.append(
             {
                 "scene_start": scene_start,

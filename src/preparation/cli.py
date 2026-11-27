@@ -9,15 +9,21 @@ from preparation.steps import STEP_HANDLERS
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Prepare YouTube videos: manifest, split, download, keyframes."
+        description="Prepare YouTube videos: manifest, split, download, keyframes, and the "
+        "optional UMD category labels."
     )
     parser.add_argument("step", choices=tuple(STEP_HANDLERS))
     parser.add_argument("--list", dest="video_list", help="TXT video list (create-manifest).")
+    parser.add_argument(
+        "--classes", help="UMD class table CSV (classify-umd-categories; default "
+        "preparation.umd.classes).",
+    )
     parser.add_argument("--limit", type=int, help="Only the first N manifest videos.")
     parser.add_argument("--content-id", dest="content_ids", nargs="+", help="Only these videos.")
     parser.add_argument(
         "--force", action="store_true",
-        help="make-split: reassign every video. extract-keyframes: extract again.",
+        help="make-split: reassign every video. extract-keyframes: extract again. "
+        "classify-umd-categories: discard every label and classify again.",
     )
     args = parser.parse_args(argv)
     try:
@@ -25,8 +31,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--limit must be a positive integer")
         result = STEP_HANDLERS[args.step](
             RunContext.load(),
-            video_list=args.video_list, limit=args.limit, content_ids=args.content_ids,
-            force=args.force,
+            video_list=args.video_list, classes=args.classes, limit=args.limit,
+            content_ids=args.content_ids, force=args.force,
         )
         if result.get("failure_count", 0):
             raise RuntimeError(f"{result['failure_count']} video(s) failed; rerun to retry")

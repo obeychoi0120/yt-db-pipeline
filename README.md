@@ -4,7 +4,7 @@
 
 | 단계 | 하는 일 | 명령 |
 | --- | --- | --- |
-| 1. Preparation | 영상 목록 → manifest, 영상 단위 분할, 다운로드, 30초 창마다 키프레임 6장(640×360) | `python -m preparation …` |
+| 1. Preparation | 영상 목록 → manifest, 영상 단위 분할, 다운로드, 30초 창마다 키프레임 6장(640×360, 0·5·10…25초) | `python -m preparation …` |
 | 2. Extraction | Gemini(Vertex AI) 또는 로컬 vLLM 모델로 장면별 Context·Entities·Actions 그래프 생성 | `python -m extraction …` |
 | 3. Scoring | 그래프를 주장 단위로 나눠 d3 Decision 모델이 키프레임과 대조 | `python -m scoring …` |
 | 4. 프롬프트 개선 | 수동. 3단계 보고서를 근거로 `prompts/`를 고치고 `prompts/update_note.md`에 기록 | – |
@@ -23,7 +23,7 @@ pip install -r requirements-scoring.txt   # requirements-main.txt 포함
 - 확인한 조합: torch 2.13.0+cu130, transformers 5.19.0, vllm 0.32.0, yt-dlp 2026.10.26, google-genai 3.6.1, accelerate 1.16.0.
 - LoRA 학습은 별도 환경에 [requirements-finetune.txt](requirements-finetune.txt)를 설치해 실행합니다.
 - Gemini는 `gcloud auth application-default login`으로 인증합니다.
-- IAB 분류(`extract-iab-gt`)와 세그먼트 분류(`extract-segment-gt`)만 Gemini API 키를 씁니다. Decisions API가 Vertex AI에 없기 때문입니다. Cloud Console의 사용자 인증 정보에서 API 제한을 "Gemini API"로 둔 키를 만들어 `config.yaml`의 `extraction.iab.api_key`에 넣습니다.
+- IAB 분류(`extract-iab-gt`), 세그먼트 분류(`extract-segment-gt`), UMD 분류(`classify-umd-categories`)만 Gemini API 키를 씁니다. Decisions API가 Vertex AI에 없기 때문입니다. Cloud Console의 사용자 인증 정보에서 API 제한을 "Gemini API"로 둔 키를 만들어 `config.yaml`의 `extraction.iab.api_key`에 넣습니다.
 
 모든 명령은 저장소 루트에서 `PYTHONPATH=src`로 실행합니다(`pip install -e .`을 했다면 생략).
 
@@ -38,6 +38,7 @@ cp config.example.yaml config.yaml
 | `preparation.video_list` | `Category_001.mp4 https://…` 줄로 된 TXT 목록. 번호는 카테고리마다 001부터 세고, `[Category]` 헤더는 없어도 된다. 예전 `001_Category001 https://…` 형식도 읽는다 |
 | `preparation.data_root` | 내려받은 영상(`videos/`)과 메타데이터(`metadata/`)를 둘 위치 |
 | `preparation.download` | 선호 해상도(`height`, 기본 360), 쿠키 파일 경로, 대기 시간 |
+| `preparation.umd` | UMD 분류용. `classes`(분류표 CSV), `max_frames`(영상당 보낼 키프레임 수, 기본 50), `low_confidence`(경고 기준, 기본 0.3), `threads`(동시에 분류할 영상 수, 기본 8). API 키와 `model_id`는 `extraction.iab`를 같이 씀 |
 | `preparation.download.proxy`, `ca_cert_file`, `no_check_certificates` | 사내망용. 프록시 주소와 프록시의 CA 인증서를 주거나, 인증서 검사를 끕니다(`SSL: CERTIFICATE_VERIFY_FAILED`가 날 때) |
 | `extraction.models.<이름>` | `--model`로 고르는 생성 모델. `backend: vllm`(로컬 체크포인트 `path`) 또는 `backend: gemini` |
 | `extraction.models.<이름>.mm_processor_kwargs` | vLLM 모델의 이미지 처리 인자. Gemma는 `max_soft_tokens: 140`(키프레임당 120토큰) |
@@ -45,7 +46,7 @@ cp config.example.yaml config.yaml
 | `extraction.models.<이름>.threads` | Gemini 모델의 동시 요청 수(기본 32) |
 | `scoring.d3_path` | d3 Judge 체크포인트 경로. `--d3-server`만 쓰면 없어도 됩니다 |
 | `evaluation.bge_path` | 교사 일치도에 쓰는 BGE 인코더 경로 |
-| `extraction.iab` | IAB 분류와 세그먼트 분류용. `api_key`(Gemini API 키, `config.yaml`에만 둠), `model_id`(기본 `gemini-decision-1`), `threads`(동시에 분류할 장면 수, 기본 16) |
+| `extraction.iab` | IAB·세그먼트·UMD 분류용. `api_key`(Gemini API 키, `config.yaml`에만 둠), `model_id`(기본 `gemini-decision-1`), `threads`(동시에 분류할 장면 수, 기본 16) |
 
 `YT_DB_PIPELINE_CONFIG=/path/to/other.yaml`로 다른 설정 파일을 쓸 수 있습니다.
 
@@ -62,6 +63,8 @@ python -m preparation create-manifest
 python -m preparation make-split
 python -m preparation download-videos
 python -m preparation extract-keyframes
+# (선택) 영상별 UMD 소분류. 키프레임을 최대 50장 골라 Gemini Decisions API에 보냄
+python -m preparation classify-umd-categories
 
 # 2. Extraction: 교사는 전체, 학생은 val (프롬프트 개선용)
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemini
@@ -100,6 +103,8 @@ python -m evaluation compare --run-id $RUN_ID --students gemma4_e2b gemma4_e2b_l
 - `--split train|val|test`와 `--limit N`으로 대상 영상을 줄일 수 있습니다. 키프레임이 준비되지 않은 영상은 건너뜁니다.
 - `extract-iab-gt`는 장면의 키프레임을 Gemini Decisions API에 보내 IAB 카테고리를 고릅니다. 한 질문의 선택지가 255개로 제한되므로 Tier 1(37개)에서 시작해 고른 카테고리의 하위 항목으로 한 단계씩 내려가고, 맞는 하위 항목이 없다는 답이 나오거나 더 내려갈 곳이 없으면 멈춥니다(장면당 1~4회 호출). 장면 그래프를 쓰지 않으므로 `extract-graph-scenes`보다 먼저 돌려도 됩니다. 분류표나 `model_id`가 바뀌면 기존 라벨을 지우고 다시 만듭니다.
 - `extract-segment-gt`는 같은 방식으로 세그먼트 표의 Segment Name 가운데 하나를 고릅니다. 표의 세그먼트 전부(31개)와 `none`을 한 질문의 선택지로 내므로 장면당 1회 호출합니다. 일반 장르와 더 구체적인 장르가 모두 맞으면(`Sports`와 `Baseball`, `Drama`와 `Crime Drama`) 구체적인 쪽을, 맞는 장르가 없으면 `none`을 고르게 합니다. 선택지 문구는 Segment Name이고, Audience Definition의 "who watch X contents"가 이름과 다르면 `Action (action or adventure)`처럼 X를 붙입니다. 표나 `model_id`가 바뀌면 기존 라벨을 지우고 다시 만듭니다.
+- 키프레임은 30초 창을 6등분한 각 구간의 시작(0, 5, 10, …, 25초)에서 뽑습니다. 영상 끝에서 잘린 마지막 창도 같은 간격입니다(65초 영상이면 마지막 창은 60초 한 장). 예전에는 구간 가운데(2.5, 7.5, …초)였습니다. 타임스탬프 JSON이 달라지므로 다음 `extract-keyframes`에서 모든 영상이 자동으로 다시 추출되고, 예전 PNG(`0002_5.png` 등)는 지워지지 않고 남습니다. 어느 단계도 그 파일을 읽지 않으니 필요 없으면 직접 지우세요. 예전 키프레임으로 만든 그래프·점수·라벨이 있는 Run은 새 키프레임과 섞이지 않도록 새 `RUN_ID`로 추출부터 다시 돌립니다.
+- `classify-umd-categories`(선택)는 영상의 키프레임 전체에서 처음과 끝을 포함해 균등 간격으로 최대 `max_frames`장(기본 50)을 골라, 한 요청에 Gemini Decisions API로 보냅니다. 50장이면 4분 10초까지는 5초 간격 그대로이고, 그보다 긴 영상은 간격이 넓어집니다. 질문은 하나이고, 선택지는 분류표의 소분류 232개 전부와 `none`입니다. 이름의 대분류(`Sports_001`의 `Sports`)는 모델에 주지 않으며, 선택지 문구는 `Law (Action and Thriller)`처럼 소속 대분류를 괄호로 붙입니다. 키프레임은 디스크의 PNG를 그대로 보냅니다. 분류표, `model_id`, `max_frames`가 바뀌면 기존 라벨을 지우고 다시 만듭니다. 키프레임이 없는 영상은 건너뛰고, 실패한 영상만 다음 실행에서 다시 묻습니다. 다른 단계는 이 결과를 쓰지 않습니다.
 - `splits.csv`가 있으면 기존 배정은 바뀌지 않고 새 영상만 배정됩니다.
 - 분할은 용도를 나눠 씁니다. val은 프롬프트 개선, train·val은 LoRA 학습, test는 최종 평가에만 씁니다. 프롬프트를 고칠 때 test 결과를 보지 않습니다.
 - `$D3`는 d3 채점 방식입니다. `D3="--d3-server http://localhost:8899"`이면 vLLM Semantic Router 서버에 질문을 보내고, `D3=""`이면 GPU마다 d3를 직접 올립니다. 서버는 다른 터미널에서 먼저 띄웁니다: `vllm-sr serve vllm-sr/d3-mini -e -dp 4 --device-ids 0,1,2,3 --startup-timeout 7200`. 같은 d3 가중치이므로 두 방식은 채점 결과를 서로 재사용합니다(서버의 요청 배치로 확률이 거의 같은 판정 일부가 바뀔 수 있습니다).
@@ -112,8 +117,9 @@ python -m evaluation compare --run-id $RUN_ID --students gemma4_e2b gemma4_e2b_l
 ```text
 <data_root>/videos/<content_id>.mp4, metadata/<content_id>.json
 artifacts/preparation/manifest.csv, splits.csv
-artifacts/preparation/resized_keyframes/640_360/<content_id>/<SSSS>.png
+artifacts/preparation/resized_keyframes/640_360/<content_id>/<SSSS>.png   # 초 4자리, 소수가 있으면 <SSSS>_<십분의 일초>.png
 artifacts/preparation/source_assets/<content_id>/timestamp_fixed_30s.json
+artifacts/preparation/umd_categories/labels.jsonl, labels.csv
 artifacts/runs/<RUN_ID>/extraction/graph_<모델>/<content_id>.jsonl
 artifacts/runs/<RUN_ID>/extraction/iab_gt/<content_id>.jsonl
 artifacts/runs/<RUN_ID>/extraction/segment_gt/<content_id>.jsonl
@@ -125,6 +131,8 @@ artifacts/runs/<RUN_ID>/reports/*.md
 장면 행은 `content_id, scene_idx, tokens, warning, scene_graph`입니다. `scene_graph`는 `medium, format, topics, entities[{id,name,attributes}], actions[{actor,action,target,tool,place}]`이고, 파싱에 실패하면 원문 텍스트가 `PARSE_FAILED` 태그와 함께 들어갑니다.
 
 IAB 라벨 행은 `content_id, scene_idx, iab_id, iab_name, iab_path, confidence, tiers[{tier,id,name,confidence,top}]`입니다. `iab_id`는 분류표의 Unique ID, `iab_path`는 Tier 1부터의 이름, `confidence`는 마지막으로 고른 Tier의 확률, `top`은 그 Tier에서 확률이 높은 3개입니다. 하위 항목이 없다는 답으로 멈췄으면 그 확률이 `stop_confidence`에 들어가고, 실패한 장면은 `error`만 가집니다.
+
+UMD 라벨 행(`labels.jsonl`, 영상당 한 행)은 `content_id, query_category, pred_umd_categories, warning, frames_total, frames_used`입니다. `query_category`는 영상 이름에서 온 대분류, `pred_umd_categories`는 확률이 높은 순으로 소분류(UMD category) 상위 5개와 그 확률(`none`도 들어갈 수 있음), `warning`은 가장 높은 확률이 `low_confidence`(기본 0.3) 미만이면 `LOW_CONFIDENCE`, 아니면 `null`입니다. `frames_total`은 영상의 키프레임 수, `frames_used`는 실제로 보낸 수입니다. 실패한 영상은 `error`를 가지고 `pred_umd_categories`가 `null`입니다. `labels.csv`는 같은 내용을 `Baseball:0.62; Softball:0.21; …`처럼 한 칸에 적은 검토용 파일입니다. `warning`은 실행할 때마다 지금의 기준으로 다시 계산하므로, 기준을 바꿔도 모델에 다시 묻지 않습니다.
 
 세그먼트 라벨 행은 `content_id, scene_idx, segment_id, segment, confidence, probabilities`입니다. `segment`는 고른 Segment Name, `segment_id`는 그 이름을 소문자와 밑줄로 바꾼 선택지 id, `confidence`는 고른 선택지의 확률, `probabilities`는 `none`을 포함한 모든 선택지의 확률(높은 순)입니다. `none`을 골랐으면 `segment_id`와 `segment`가 `null`이고, 실패한 장면은 `error`만 가집니다.
 

@@ -116,6 +116,11 @@ class RunContext:
     def source_assets_dir(self) -> Path:
         return self.preparation_dir / "source_assets"
 
+    @property
+    def umd_dir(self) -> Path:
+        """UMD category labels of each video (classify-umd-categories)."""
+        return self.preparation_dir / "umd_categories"
+
     # Run outputs
 
     def scene_dir(self, model: str) -> Path:

@@ -21,6 +21,12 @@ preparation:
     seed: 42
     ratios: {train: 0.8, val: 0.1, test: 0.1}
   keyframe_workers: 4
+  # classify-umd-categories (optional): API key and model_id come from extraction.iab.
+  umd:
+    classes: data/UMD_class_261127.csv
+    max_frames: 50          # keyframes sent per video, spread evenly over the whole video
+    low_confidence: 0.3     # warning LOW_CONFIDENCE when the top probability is below this
+    threads: 8              # videos classified at once
 
 extraction:
   visual_evidence:

@@ -85,9 +85,20 @@ def keyframes(context, *, force=False, limit=None, content_ids=None, **_):
     return {"failure_count": result["failed"]}
 
 
+def classify_umd(context, *, classes=None, force=False, limit=None, content_ids=None, **_):
+    """(Optional) UMD category of each video with extracted keyframes."""
+    # Imported here: it pulls in the extraction package, which the other steps never need.
+    from preparation.umd import classify_umd_categories
+
+    return classify_umd_categories(
+        context, classes=classes, content_ids=content_ids, limit=limit, force=force,
+    )
+
+
 STEP_HANDLERS = {
     "create-manifest": create_manifest,
     "make-split": make_split,
     "download-videos": download,
     "extract-keyframes": keyframes,
+    "classify-umd-categories": classify_umd,
 }

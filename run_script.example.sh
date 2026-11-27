@@ -28,6 +28,8 @@ python -m preparation create-manifest
 python -m preparation make-split
 python -m preparation download-videos
 python -m preparation extract-keyframes
+# (선택) 영상별 UMD 소분류: Gemini Decisions API(extraction.iab의 API 키)
+# python -m preparation classify-umd-categories
 
 # 2. Extraction: 교사(Gemini)는 전체(학습 정답과 평가 기준), 학생(Gemma)은 val
 python -m extraction extract-graph-scenes --run-id $RUN_ID --schema $PROMPT --model gemini
