@@ -2,8 +2,9 @@
 artifacts_root: artifacts
 
 preparation:
-  # TXT list of "Category_001.mp4 https://..." lines, numbered from 001 in each category.
-  video_list: data/video_list_umd_500_261127.txt
+  # TXT list of "Category_001.mp4 https://..." lines, or a CSV with Name and URL columns;
+  # names are numbered from 001 in each category.
+  video_list: data/video_list_umd_1000_261127.csv
   # Downloaded videos (videos/<content_id>.mp4) and metadata (metadata/<content_id>.json).
   data_root: /path/to/youtube_dataset
   download:

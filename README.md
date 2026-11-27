@@ -35,7 +35,7 @@ cp config.example.yaml config.yaml
 
 | 키 | 내용 |
 | --- | --- |
-| `preparation.video_list` | `Category_001.mp4 https://…` 줄로 된 TXT 목록. 번호는 카테고리마다 001부터 세고, `[Category]` 헤더는 없어도 된다. 예전 `001_Category001 https://…` 형식도 읽는다 |
+| `preparation.video_list` | `make-split`이 읽는 영상 목록(`--csv-file`로 바꿀 수 있음). `Name`, `URL` 열이 있는 CSV(다른 열은 무시, 예: `data/video_list_umd_1000_261127.csv`)나 `Category_001.mp4 https://…` 줄로 된 TXT. 번호는 카테고리마다 001부터 세고, TXT의 `[Category]` 헤더는 없어도 된다. 예전 `001_Category001 https://…` 형식도 읽는다 |
 | `preparation.data_root` | 내려받은 영상(`videos/`)과 메타데이터(`metadata/`)를 둘 위치 |
 | `preparation.download` | 선호 해상도(`height`, 기본 360), 쿠키 파일 경로, 대기 시간 |
 | `preparation.umd` | UMD 분류용. `classes`(분류표 CSV), `max_frames`(영상당 보낼 키프레임 수, 기본 50), `low_confidence`(경고 기준, 기본 0.3), `threads`(동시에 분류할 영상 수, 기본 8). API 키와 `model_id`는 `extraction.iab`를 같이 씀 |
@@ -59,8 +59,7 @@ PROMPT=prompts/scene_graph_v8_2.md
 D3="--d3-server http://localhost:8899"   # 서버 없이 GPU마다 d3를 올리려면 D3=""
 
 # 1. Preparation (Run과 무관하게 한 번)
-python -m preparation create-manifest
-python -m preparation make-split
+python -m preparation make-split            # 목록을 읽어 manifest.csv와 splits.csv를 씀 (--csv-file로 다른 목록)
 python -m preparation download-videos
 python -m preparation extract-keyframes
 # (선택) 영상별 UMD 소분류. 키프레임을 최대 50장 골라 Gemini Decisions API에 보냄
@@ -105,7 +104,8 @@ python -m evaluation compare --run-id $RUN_ID --students gemma4_e2b gemma4_e2b_l
 - `extract-segment-gt`는 같은 방식으로 세그먼트 표의 Segment Name 가운데 하나를 고릅니다. 표의 세그먼트 전부(31개)와 `none`을 한 질문의 선택지로 내므로 장면당 1회 호출합니다. 일반 장르와 더 구체적인 장르가 모두 맞으면(`Sports`와 `Baseball`, `Drama`와 `Crime Drama`) 구체적인 쪽을, 맞는 장르가 없으면 `none`을 고르게 합니다. 선택지 문구는 Segment Name이고, Audience Definition의 "who watch X contents"가 이름과 다르면 `Action (action or adventure)`처럼 X를 붙입니다. 표나 `model_id`가 바뀌면 기존 라벨을 지우고 다시 만듭니다.
 - 키프레임은 30초 창을 6등분한 각 구간의 시작(0, 5, 10, …, 25초)에서 뽑습니다. 영상 끝에서 잘린 마지막 창도 같은 간격입니다(65초 영상이면 마지막 창은 60초 한 장). 예전에는 구간 가운데(2.5, 7.5, …초)였습니다. 타임스탬프 JSON이 달라지므로 다음 `extract-keyframes`에서 모든 영상이 자동으로 다시 추출되고, 예전 PNG(`0002_5.png` 등)는 지워지지 않고 남습니다. 어느 단계도 그 파일을 읽지 않으니 필요 없으면 직접 지우세요. 예전 키프레임으로 만든 그래프·점수·라벨이 있는 Run은 새 키프레임과 섞이지 않도록 새 `RUN_ID`로 추출부터 다시 돌립니다.
 - `classify-umd-categories`(선택)는 영상의 키프레임 전체에서 처음과 끝을 포함해 균등 간격으로 최대 `max_frames`장(기본 50)을 골라, 한 요청에 Gemini Decisions API로 보냅니다. 50장이면 4분 10초까지는 5초 간격 그대로이고, 그보다 긴 영상은 간격이 넓어집니다. 질문은 하나이고, 선택지는 분류표의 소분류 232개 전부와 `none`입니다. 이름의 대분류(`Sports_001`의 `Sports`)는 모델에 주지 않으며, 선택지 문구는 `Law (Action and Thriller)`처럼 소속 대분류를 괄호로 붙입니다. 키프레임은 디스크의 PNG를 그대로 보냅니다. 분류표, `model_id`, `max_frames`가 바뀌면 기존 라벨을 지우고 다시 만듭니다. 키프레임이 없는 영상은 건너뛰고, 실패한 영상만 다음 실행에서 다시 묻습니다. 다른 단계는 이 결과를 쓰지 않습니다.
-- `splits.csv`가 있으면 기존 배정은 바뀌지 않고 새 영상만 배정됩니다.
+- `make-split`은 영상 목록을 읽어 `manifest.csv`(content_id, url)를 다시 쓰고 분할을 배정합니다. 따로 manifest를 만드는 단계는 없습니다. 목록을 고쳤으면 `make-split`만 다시 돌리면 됩니다.
+- `splits.csv`가 있으면 기존 배정은 바뀌지 않고 새 영상만 배정됩니다. 목록에서 뺀 영상은 manifest와 splits에서 함께 빠집니다.
 - 분할은 용도를 나눠 씁니다. val은 프롬프트 개선, train·val은 LoRA 학습, test는 최종 평가에만 씁니다. 프롬프트를 고칠 때 test 결과를 보지 않습니다.
 - `$D3`는 d3 채점 방식입니다. `D3="--d3-server http://localhost:8899"`이면 vLLM Semantic Router 서버에 질문을 보내고, `D3=""`이면 GPU마다 d3를 직접 올립니다. 서버는 다른 터미널에서 먼저 띄웁니다: `vllm-sr serve vllm-sr/d3-mini -e -dp 4 --device-ids 0,1,2,3 --startup-timeout 7200`. 같은 d3 가중치이므로 두 방식은 채점 결과를 서로 재사용합니다(서버의 요청 배치로 확률이 거의 같은 판정 일부가 바뀔 수 있습니다).
 - `train_lora.sh`는 GPU마다 학습 프로세스를 하나씩 띄웁니다(DDP). 쓸 GPU는 `--gpus 0,1`로 정하고, 빼면 `CUDA_VISIBLE_DEVICES`, 그것도 없으면 전체 GPU를 씁니다. vllm-sr이 쓰는 GPU는 빼고 지정하세요. GPU 수와 관계없이 전체 batch는 16입니다.

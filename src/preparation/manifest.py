@@ -1,4 +1,4 @@
-"""Video list, two-column manifest and video-level splits."""
+"""Video list (TXT or CSV), two-column manifest and video-level splits."""
 
 from __future__ import annotations
 
@@ -23,52 +23,72 @@ NUMBERED_LINE = re.compile(r"(\d{3})_([A-Za-z]+)(\d{3})\s+(https?://\S+)")
 NAMED_LINE = re.compile(rf"({CATEGORY})_(\d{{3}})(?:\.mp4)?\s+(https?://\S+)")
 
 
-def read_txt_video_list(txt_file_path: str | Path) -> list[tuple[str, str]]:
-    """Read a video list of ``<name> <url>`` lines; ``[Category]`` headers are optional.
+# Columns a CSV video list must have; the others (title, query, ...) are ignored.
+CSV_LIST_FIELDS = ("Name", "URL")
+
+
+def _list_lines(path: Path) -> list[tuple[int, str]]:
+    """``(line number, "<name> <url>")`` of a TXT list, or of the Name and URL columns of a CSV."""
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        if path.suffix.lower() != ".csv":
+            return list(enumerate(handle, start=1))
+        reader = csv.DictReader(handle)
+        missing = [field for field in CSV_LIST_FIELDS if field not in (reader.fieldnames or [])]
+        if missing:
+            raise ManifestContractError(f"{path} has no {', '.join(missing)} column")
+        return [
+            (line_number, f"{(row['Name'] or '').strip()} {(row['URL'] or '').strip()}")
+            for line_number, row in enumerate(reader, start=2)
+            if (row["Name"] or "").strip() or (row["URL"] or "").strip()
+        ]
+
+
+def read_video_list(list_path: str | Path) -> list[tuple[str, str]]:
+    """Read a video list: a TXT of ``<name> <url>`` lines (``[Category]`` headers optional) or a
+    CSV with Name and URL columns.
 
     A name is ``Category_NNN.mp4`` (NNN counts within the category, and the list id drops
     ``.mp4``) or the older ``NNN_CategoryNNN`` (the first number counts the whole list).
     """
-    path = Path(txt_file_path)
+    path = Path(list_path)
     current_category = ""
     rows: list[tuple[str, str]] = []
     seen_list_ids: set[str] = set()
     per_category: dict[str, int] = {}
-    with path.open("r", encoding="utf-8-sig") as handle:
-        for line_number, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            category_match = re.fullmatch(rf"\[({CATEGORY})\]", line)
-            if category_match:
-                current_category = category_match.group(1)
-                continue
-            if numbered := NUMBERED_LINE.fullmatch(line):
-                index, item_category, item_number, url = numbered.groups()
-                list_id = f"{index}_{item_category}{item_number}"
-                if int(index) != len(rows) + 1:
-                    raise ManifestContractError(
-                        f"line {line_number} index must be {len(rows) + 1:03d}: {list_id}"
-                    )
-            elif named := NAMED_LINE.fullmatch(line):
-                item_category, item_number, url = named.groups()
-                list_id = f"{item_category}_{item_number}"
-                expected = per_category.get(item_category, 0) + 1
-                if int(item_number) != expected:
-                    raise ManifestContractError(
-                        f"line {line_number} number must be {expected:03d}: {list_id}"
-                    )
-                per_category[item_category] = expected
-            else:
-                raise ManifestContractError(f"invalid video list line {line_number}: {line}")
-            if current_category and item_category != current_category:
+    for line_number, raw_line in _list_lines(path):
+        line = raw_line.strip()
+        if not line:
+            continue
+        category_match = re.fullmatch(rf"\[({CATEGORY})\]", line)
+        if category_match:
+            current_category = category_match.group(1)
+            continue
+        if numbered := NUMBERED_LINE.fullmatch(line):
+            index, item_category, item_number, url = numbered.groups()
+            list_id = f"{index}_{item_category}{item_number}"
+            if int(index) != len(rows) + 1:
                 raise ManifestContractError(
-                    f"line {line_number} list id does not match [{current_category}]: {list_id}"
+                    f"line {line_number} index must be {len(rows) + 1:03d}: {list_id}"
                 )
-            if list_id in seen_list_ids:
-                raise ManifestContractError(f"duplicate list id on line {line_number}: {list_id}")
-            seen_list_ids.add(list_id)
-            rows.append((list_id, url))
+        elif named := NAMED_LINE.fullmatch(line):
+            item_category, item_number, url = named.groups()
+            list_id = f"{item_category}_{item_number}"
+            expected = per_category.get(item_category, 0) + 1
+            if int(item_number) != expected:
+                raise ManifestContractError(
+                    f"line {line_number} number must be {expected:03d}: {list_id}"
+                )
+            per_category[item_category] = expected
+        else:
+            raise ManifestContractError(f"invalid video list line {line_number}: {line}")
+        if current_category and item_category != current_category:
+            raise ManifestContractError(
+                f"line {line_number} list id does not match [{current_category}]: {list_id}"
+            )
+        if list_id in seen_list_ids:
+            raise ManifestContractError(f"duplicate list id on line {line_number}: {list_id}")
+        seen_list_ids.add(list_id)
+        rows.append((list_id, url))
     return rows
 
 
@@ -114,14 +134,14 @@ def category_of(content_id: str) -> str:
     return match.group(1) or match.group(2)
 
 
-def manifest_rows_from_txt(txt_file_path: str | Path) -> list[dict[str, str]]:
+def manifest_rows_from_list(list_path: str | Path) -> list[dict[str, str]]:
     rows = []
-    for list_id, url in read_txt_video_list(txt_file_path):
+    for list_id, url in read_video_list(list_path):
         video_id = video_id_from_url(url)
         if not video_id:
             raise ManifestContractError(f"no YouTube video id in URL for {list_id}: {url}")
         rows.append({"content_id": normalize_content_id(f"{list_id}_{video_id}"), "url": url})
-    return validate_manifest_rows(rows, source=str(txt_file_path))
+    return validate_manifest_rows(rows, source=str(list_path))
 
 
 def validate_manifest_rows(
@@ -193,7 +213,7 @@ def selected_content_ids(context, *, split: str | None = None, limit: int | None
     """Manifest order, optionally one split and the first ``limit`` videos."""
     if not context.manifest_path.is_file():
         raise ManifestContractError(
-            f"manifest not found: {context.manifest_path}; run python -m preparation create-manifest"
+            f"manifest not found: {context.manifest_path}; run python -m preparation make-split"
         )
     content_ids = [row["content_id"] for row in read_manifest_rows(context.manifest_path)]
     if split is not None:

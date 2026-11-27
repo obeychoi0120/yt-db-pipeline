@@ -4,7 +4,7 @@ import pytest
 
 from preparation.download import format_selector
 from preparation.manifest import (
-    ManifestContractError, category_of, manifest_rows_from_txt, video_id_from_url,
+    ManifestContractError, category_of, manifest_rows_from_list, video_id_from_url,
 )
 from preparation.split import assign_splits
 from visual_sampling import build_fixed_windows
@@ -19,7 +19,7 @@ def test_manifest_from_txt(tmp_path):
         "[Tech]\n002_Tech001 https://youtu.be/NeqB-O1M7IY\n",
         encoding="utf-8",
     )
-    rows = manifest_rows_from_txt(source)
+    rows = manifest_rows_from_list(source)
     assert [row["content_id"] for row in rows] == [
         "001_News001_VV3qIkq5ofY", "002_Tech001_NeqB-O1M7IY"
     ]
@@ -34,7 +34,7 @@ def test_manifest_from_named_list(tmp_path):
         "Lifestyle_and_Travel_002 https://youtu.be/NeqB-O1M7IY\n",
         encoding="utf-8",
     )
-    rows = manifest_rows_from_txt(source)
+    rows = manifest_rows_from_list(source)
     assert [row["content_id"] for row in rows] == [
         "Lifestyle_and_Travel_001_fulap_pZ_Uc", "Sports_001_abc_123_x",
         "Lifestyle_and_Travel_002_NeqB-O1M7IY",
@@ -44,23 +44,46 @@ def test_manifest_from_named_list(tmp_path):
     ]
     source.write_text("Sports_002.mp4 https://youtu.be/abc\n", encoding="utf-8")
     with pytest.raises(ManifestContractError):  # numbers start at 001 in each category
-        manifest_rows_from_txt(source)
+        manifest_rows_from_list(source)
     source.write_text("[Sports]\nDrama_001.mp4 https://youtu.be/abc\n", encoding="utf-8")
     with pytest.raises(ManifestContractError):
-        manifest_rows_from_txt(source)
+        manifest_rows_from_list(source)
+
+
+def test_manifest_from_csv_list(tmp_path):
+    source = tmp_path / "list.csv"
+    source.write_text(
+        "\ufeffName,Subcategory,Title,URL,Date\n"
+        "Sports_001.mp4,Baseball,\"Title, with comma\",https://youtu.be/abc_123_x,2026-01-01\n"
+        ",,,,\n"
+        "Sports_002.mp4,,,https://www.youtube.com/watch?v=NeqB-O1M7IY,\n",
+        encoding="utf-8",
+    )
+    rows = manifest_rows_from_list(source)
+    assert rows == [
+        {"content_id": "Sports_001_abc_123_x", "url": "https://youtu.be/abc_123_x"},
+        {"content_id": "Sports_002_NeqB-O1M7IY",
+         "url": "https://www.youtube.com/watch?v=NeqB-O1M7IY"},
+    ]
+    source.write_text("Name,URL\nSports_002.mp4,https://youtu.be/abc\n", encoding="utf-8")
+    with pytest.raises(ManifestContractError, match="line 2 number must be 001"):
+        manifest_rows_from_list(source)
+    source.write_text("Name,Link\nSports_001.mp4,https://youtu.be/abc\n", encoding="utf-8")
+    with pytest.raises(ManifestContractError, match="no URL column"):
+        manifest_rows_from_list(source)
 
 
 def test_manifest_rejects_wrong_section_and_bad_lines(tmp_path):
     source = tmp_path / "list.txt"
     source.write_text("[News]\n001_Tech001 https://youtu.be/abc\n", encoding="utf-8")
     with pytest.raises(ManifestContractError):
-        manifest_rows_from_txt(source)
+        manifest_rows_from_list(source)
     source.write_text("[News]\n002_News001 https://youtu.be/abc\n", encoding="utf-8")
     with pytest.raises(ManifestContractError):  # the list index must start at 001
-        manifest_rows_from_txt(source)
+        manifest_rows_from_list(source)
     source.write_text("[News]\nnot a video line\n", encoding="utf-8")
     with pytest.raises(ManifestContractError):
-        manifest_rows_from_txt(source)
+        manifest_rows_from_list(source)
 
 
 def test_video_id_from_url_forms():
@@ -132,3 +155,36 @@ def test_ytdlp_command_for_a_corporate_proxy(tmp_path):
     insecure = ytdlp_command("u", video, info, {**settings, "no_check_certificates": True})
     assert "--no-check-certificates" in insecure and "--compat-options" not in insecure
     assert shown_proxy("http://user:pw@p:8080") == "http://***@p:8080"
+
+
+def test_make_split_writes_the_manifest_from_a_csv_list(tmp_path, monkeypatch):
+    from pipeline_runtime import RunContext
+    from preparation import cli, steps
+    from preparation.manifest import read_manifest_rows, read_splits
+
+    (tmp_path / "config.yaml").write_text(
+        "extraction:\n  visual_evidence: {scene_duration: 30, num_keyframes: 6}\n"
+        "preparation: {}\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "list.csv"
+    lines = ["Name,Title,URL"] + [
+        f"Sports_{index:03d}.mp4,t,https://youtu.be/v{index}" for index in range(1, 11)
+    ]
+    source.write_text("\n".join(lines[:6]) + "\n", encoding="utf-8")
+    context = RunContext.load(root=tmp_path)
+    monkeypatch.setattr(steps, "log_step_start", lambda *args, **kwargs: None)
+
+    steps.make_split(context, csv_file=str(source))
+    assert [row["content_id"] for row in read_manifest_rows(context.manifest_path)] == [
+        f"Sports_{index:03d}_v{index}" for index in range(1, 6)
+    ]
+    first = read_splits(context.splits_path)
+    # More videos in the list keep the earlier assignments.
+    source.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    steps.make_split(context, csv_file=str(source))
+    again = read_splits(context.splits_path)
+    assert len(again) == 10 and all(again[cid] == split for cid, split in first.items())
+    assert "create-manifest" not in steps.STEP_HANDLERS
+    with pytest.raises(SystemExit):
+        cli.main(["create-manifest"])

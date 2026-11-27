@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 from artifact_io import write_json
-from preparation.manifest import manifest_rows_from_txt, video_id_from_url
+from preparation.manifest import manifest_rows_from_list, video_id_from_url
 
 OLD_NAME = re.compile(r"\d{3}_[A-Za-z]+\d{3}_(.+)")
 
@@ -37,13 +37,13 @@ def plan_renames(folder: Path, suffix: str, new_ids: dict[str, str]):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--list", required=True, help="New TXT video list.")
+    parser.add_argument("--list", required=True, help="New TXT or CSV video list.")
     parser.add_argument("--data-root", required=True, help="Folder with videos/ and metadata/.")
     parser.add_argument("--apply", action="store_true", help="Rename; without it only print.")
     args = parser.parse_args()
 
     new_ids = {video_id_from_url(row["url"]): row["content_id"]
-               for row in manifest_rows_from_txt(args.list)}
+               for row in manifest_rows_from_list(args.list)}
     root = Path(args.data_root)
     for name, suffix in (("videos", ".mp4"), ("metadata", ".json")):
         renames, unlisted = plan_renames(root / name, suffix, new_ids)

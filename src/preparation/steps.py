@@ -6,7 +6,7 @@ from pipeline_logging import log_step_start
 from preparation.download import download_settings, download_videos, shown_proxy
 from preparation.keyframes import extract_keyframes
 from preparation.manifest import (
-    MANIFEST_FIELDS, SPLIT_FIELDS, SPLITS, category_of, manifest_rows_from_txt,
+    MANIFEST_FIELDS, SPLIT_FIELDS, SPLITS, category_of, manifest_rows_from_list,
     read_manifest_rows, read_splits, selected_content_ids, write_csv,
 )
 from preparation.split import assign_splits
@@ -16,28 +16,25 @@ def _preparation(context) -> dict:
     return context.config.get("preparation") or {}
 
 
-def create_manifest(context, *, video_list=None, **_):
-    """Write manifest.csv from the TXT video list."""
-    source = video_list or _preparation(context).get("video_list")
+def make_split(context, *, csv_file=None, force=False, **_):
+    """Read the video list, write manifest.csv, and assign every video to train/val/test.
+
+    Earlier assignments are kept, so adding videos to the list only assigns the new ones.
+    """
+    source = csv_file or _preparation(context).get("video_list")
     if not source:
-        raise ValueError("pass --list or set preparation.video_list")
+        raise ValueError("pass --csv-file or set preparation.video_list")
     source = Path(source).expanduser()
     source = source if source.is_absolute() else context.root / source
-    log_step_start(context, "create-manifest", video_list=source, output=context.manifest_path)
-    rows = manifest_rows_from_txt(source)
-    write_csv(context.manifest_path, MANIFEST_FIELDS, rows)
-    print(f"[MANIFEST] videos={len(rows)} path={context.manifest_path}", flush=True)
-    return {"failure_count": 0}
-
-
-def make_split(context, *, force=False, **_):
-    """Assign every manifest video to train/val/test; earlier assignments are kept."""
     settings = _preparation(context).get("split") or {}
     seed = settings.get("seed", 42)
     ratios = settings.get("ratios", {"train": 0.8, "val": 0.1, "test": 0.1})
-    log_step_start(context, "make-split", seed=seed, ratios=ratios, force=force,
-                   output=context.splits_path)
-    content_ids = [row["content_id"] for row in read_manifest_rows(context.manifest_path)]
+    log_step_start(context, "make-split", csv_file=source, seed=seed, ratios=ratios, force=force,
+                   manifest=context.manifest_path, output=context.splits_path)
+    rows = manifest_rows_from_list(source)
+    write_csv(context.manifest_path, MANIFEST_FIELDS, rows)
+    print(f"[MANIFEST] videos={len(rows)} path={context.manifest_path}", flush=True)
+    content_ids = [row["content_id"] for row in rows]
     existing = {} if force or not context.splits_path.is_file() else read_splits(context.splits_path)
     assigned = assign_splits(content_ids, existing, seed=seed, ratios=ratios)
     write_csv(
@@ -96,7 +93,6 @@ def classify_umd(context, *, classes=None, force=False, limit=None, content_ids=
 
 
 STEP_HANDLERS = {
-    "create-manifest": create_manifest,
     "make-split": make_split,
     "download-videos": download,
     "extract-keyframes": keyframes,

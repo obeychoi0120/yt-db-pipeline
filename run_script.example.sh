@@ -24,7 +24,6 @@ D3="--d3-server http://localhost:8899"
 # D3=""
 
 # 1. Preparation: manifest, 분할, 다운로드, 키프레임
-python -m preparation create-manifest
 python -m preparation make-split
 python -m preparation download-videos
 python -m preparation extract-keyframes
